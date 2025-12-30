@@ -16,7 +16,7 @@ from chronotype.interpolation import InterpolationStrategy, LinearInterpolation,
 from chronotype.numeric import TemporalBool, TemporalFloat, TemporalInt
 from chronotype.query import TemporalQuery
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     # Core

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chronotype"
-version = "0.1.0"
+version = "0.1.1"
 description = "Temporal-native data types where every value carries its full history"
 readme = "README.md"
 license = {text = "MIT"}
@@ -47,10 +47,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/chronotype"
-Documentation = "https://github.com/yourusername/chronotype#readme"
-Repository = "https://github.com/yourusername/chronotype.git"
-Issues = "https://github.com/yourusername/chronotype/issues"
+Homepage = "https://github.com/ArliT1-F/chronotype"
+Documentation = "https://github.com/ArliT1-F/chronotype#readme"
+Repository = "https://github.com/ArliT1-F/chronotype.git"
+Issues = "https://github.com/ArliT1-F/chronotype/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
