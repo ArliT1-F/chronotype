@@ -1,6 +1,6 @@
 """Pytest configuration and fixtures."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -8,7 +8,7 @@ import pytest
 @pytest.fixture
 def base_time() -> datetime:
     """Base time for testing."""
-    return datetime(2024, 1, 1, 0, 0, 0)
+    return datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
 
 
 @pytest.fixture
