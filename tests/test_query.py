@@ -5,7 +5,7 @@ from datetime import timedelta
 import pytest
 
 from chronotype import TemporalFloat, TemporalInt
-from chronotype.exceptions import EmptyTemporalError
+from chronotype.exceptions import EmptyTemporalError, InvalidTimestampError
 
 
 class TestNumericQuery:
@@ -76,6 +76,19 @@ class TestNumericQuery:
         query = t.between(time_series[0], time_series[2], include_start=False, include_end=False)
         assert query.count() == 1
         assert query.values() == [2]
+        
+    def test_between_inverted_range_raises(self, time_series):
+        t_int = TemporalInt()
+        t_int[time_series[0]] = 1
+        
+        with pytest.raises(InvalidTimestampError):
+            t_int.between(time_series[2], time_series[0])
+            
+        t_float = TemporalFloat()
+        t_float[time_series[0]] = 1.0
+        
+        with pytest.raises(InvalidTimestampError):
+            t_float.between(time_series[2], time_series[0])
 
     def test_filter_in_query(self, time_series):
         t = TemporalInt()

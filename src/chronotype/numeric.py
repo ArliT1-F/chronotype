@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Callable, Dict, Iterator, List, Optional, Tuple, Union, overload
 
 from chronotype.base import Temporal
-from chronotype.exceptions import EmptyTemporalError
+from chronotype.exceptions import EmptyTemporalError, InvalidTimestampError
 from chronotype.interpolation import InterpolationStrategy, LinearInterpolation, StepInterpolation
 from chronotype.query import NumericTemporalQuery
 from chronotype.utils import TimestampType, normalize_timestamp, now
@@ -47,6 +47,9 @@ class TemporalFloat(Temporal[float]):
         """Query values between timestamps with numeric aggregations."""
         start_dt = normalize_timestamp(start)
         end_dt = normalize_timestamp(end)
+        
+        if start_dt > end_dt:
+            raise InvalidTimestampError("Start must be before or equal to end")
 
         entries = []
         value_before: Optional[float] = None
@@ -243,6 +246,9 @@ class TemporalInt(Temporal[int]):
         """Query values between timestamps with numeric aggregations."""
         start_dt = normalize_timestamp(start)
         end_dt = normalize_timestamp(end)
+        
+        if start_dt > end_dt:
+            raise InvalidTimestampError("Start must be before or equal to end")
 
         entries = []
         value_before: Optional[int] = None
