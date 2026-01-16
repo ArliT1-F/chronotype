@@ -321,7 +321,7 @@ class Temporal(Generic[T]):
         """Create from dictionary."""
         new = cls()
         for ts_str, value in data.get("entries", []):
-            ts = datetime.fromisoformat(ts_str)
+            ts = normalize_timestamp(datetime.fromisoformat(ts_str))
             new._timeline.append((ts, value))
         return new
 
