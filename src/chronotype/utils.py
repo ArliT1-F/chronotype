@@ -9,11 +9,11 @@ TimestampType = Union[datetime, date]
 def normalize_timestamp(ts: TimestampType) -> datetime:
     """Convert any timestamp to datetime for consistent handling."""
     if isinstance(ts, datetime):
-        if ts.tzinfo is None:
-            return ts
-        return ts
+        if ts.tzinfo is None or ts.tzinfo.utcoffset(ts) is None:
+            return ts.replace(tzinfo=timezone.utc)
+        return ts.astimezone(timezone.utc)
     elif isinstance(ts, date):
-        return datetime(ts.year, ts.month, ts.day)
+        return datetime(ts.year, ts.month, ts.day, tzinfo=timezone.utc)
     else:
         raise TypeError(f"Expected datetime or date, got {type(ts).__name__}")
 
@@ -30,7 +30,7 @@ def seconds_to_timedelta_total(start: datetime, end: datetime) -> float:
 
 def now() -> datetime:
     """Get current datetime."""
-    return datetime.now()
+    return datetime.now(timezone.utc)
 
 
 def ensure_datetime(ts: TimestampType) -> datetime:
