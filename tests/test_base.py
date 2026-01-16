@@ -1,6 +1,6 @@
 """Tests for base Temporal class."""
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -187,6 +187,17 @@ class TestTemporalBasics:
         sliced = t.slice(time_series[2], time_series[5])
         assert len(sliced) == 4
         assert sliced.first() == 2
+
+    def test_mixed_timezone_inputs_normalized(self):
+        t = Temporal[str]()
+        naive_time = datetime(2026, 1, 1, 0, 0, 0)
+        aware_time = datetime(2026, 1, 1, 1, 0, 0, tzinfo=timezone(timedelta(hours=1)))
+        t[naive_time] = "first"
+        t[aware_time] = "second"
+        
+        assert len(t) == 1
+        assert t.at(naive_time) == "second"
+
 
 
 class TestTemporalQuery:
