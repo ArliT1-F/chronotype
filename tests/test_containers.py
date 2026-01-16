@@ -71,6 +71,20 @@ class TestTemporalList:
         assert t.len_at(base_time) == 3
         assert t.len_at(base_time + timedelta(days=1)) == 4
 
+    def test_current_returns_copy(self, base_time):
+        t = TemporalList(initial=[1, 2], initial_time=base_time)
+        current = t.current()
+        current.append(3)
+        
+        assert t.current() == [1, 2]
+        
+    def test_at_returns_copy(self, base_time):
+        t = TemporalList(initial=[1, 2], initial_time=base_time)
+        value = t.at(base_time)
+        assert value is not None
+        value.append(3)
+        
+        assert t.at(base_time) == [1, 2]
 
 class TestTemporalDict:
     def test_create_with_initial(self, base_time):
@@ -143,3 +157,18 @@ class TestTemporalDict:
         history = t.history()
         assert history[0][1] == {"a": 1}
         assert history[1][1] == {"a": 1, "b": 2}
+        
+    def test_current_returns_copy(self, base_time):
+        t = TemporalDict(initial={"a": 1}, initial_time=base_time)
+        current = t.current()
+        current["b"] = 2
+
+        assert t.current() == {"a": 1}
+
+    def test_at_returns_copy(self, base_time):
+        t = TemporalDict(initial={"a": 1}, initial_time=base_time)
+        value = t.at(base_time)
+        assert value is not None
+        value["b"] = 2
+
+        assert t.at(base_time) == {"a": 1}

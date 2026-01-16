@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 from datetime import datetime
+from sqlite3.dbapi2 import Timestamp
 from typing import Any, Dict, Generic, Iterator, List, Optional, Tuple, TypeVar
 
 from chronotype.base import Temporal
@@ -37,6 +38,15 @@ class TemporalList(Temporal[List[T]]):
         """Set list at timestamp, storing a copy."""
         super().set(timestamp, list(value))
 
+    def at(self, timestamp: TimestampType) -> Optional[List[T]]:
+        """Get list at timestamp, returning a copy."""
+        value = super().at(timestamp)
+        return list(value) if value is not None else None
+    
+    def current(self) -> List[T]:
+        """Get the most recent list value, returning a copy."""
+        return list(super().current())
+    
     def append(self, value: T, timestamp: Optional[TimestampType] = None) -> None:
         """Append value to list, creating new historical entry."""
         ts = normalize_timestamp(timestamp) if timestamp else now()
@@ -149,6 +159,15 @@ class TemporalDict(Temporal[Dict[K, V]]):
     def set(self, timestamp: TimestampType, value: Dict[K, V]) -> None:
         """Set dict at timestamp, storing a copy."""
         super().set(timestamp, dict(value))
+        
+    def at(self, timestamp: TimestampType) -> Optional[Dict[K, V]]:
+        """Get dict at timestamp, returning a copy."""
+        value = super().at(timestamp)
+        return dict(value) if value is not None else None
+    
+    def current(self) -> Dict[K, V]:
+        """Get the most recent dict value, returning a copy."""
+        return dict(super().current())
 
     def set_item(
         self, key: K, value: V, timestamp: Optional[TimestampType] = None
