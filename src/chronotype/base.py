@@ -5,8 +5,7 @@ from __future__ import annotations
 import bisect
 import copy
 import json
-import pickle
-from datetime import date, datetime
+from datetime import datetime
 from typing import (
     Any,
     Callable,
@@ -16,10 +15,7 @@ from typing import (
     List,
     Optional,
     Tuple,
-    Type,
-    TypeVar,
-    Union,
-    overload,
+    TypeVar
 )
 
 from chronotype.exceptions import EmptyTemporalError, InvalidTimestampError
@@ -43,6 +39,8 @@ class Temporal(Generic[T]):
         initial: Optional[T] = None,
         initial_time: Optional[TimestampType] = None,
         interpolation: Optional[InterpolationStrategy[T]] = None,
+        serializer: Optional[Callable[[T], Dict[str, Any]]] = None,
+        deserializer: Optional[Callable[[Dict[str, Any]], T]] = None,
     ) -> None:
         """
         Initialize a temporal value.
@@ -54,6 +52,8 @@ class Temporal(Generic[T]):
         """
         self._timeline: List[Tuple[datetime, T]] = []
         self._interpolation: InterpolationStrategy[T] = interpolation or StepInterpolation()
+        self._serializer = serializer
+        self._deserializer = deserializer
 
         if initial is not None:
             ts = normalize_timestamp(initial_time) if initial_time else now()
@@ -254,6 +254,8 @@ class Temporal(Generic[T]):
         new = Temporal[T]()
         new._timeline = list(self._timeline)
         new._interpolation = self._interpolation
+        new._serializer = self._serializer
+        new._deserializer = self._deserializer
         return new
 
     def deepcopy(self) -> "Temporal[T]":
@@ -261,6 +263,8 @@ class Temporal(Generic[T]):
         new = Temporal[T]()
         new._timeline = [(ts, copy.deepcopy(v)) for ts, v in self._timeline]
         new._interpolation = self._interpolation
+        new._serializer = self._serializer
+        new._deserializer = self._deserializer
         return new
 
     def timestamps(self) -> List[datetime]:
@@ -277,6 +281,8 @@ class Temporal(Generic[T]):
         new = Temporal[T]()
         new._timeline = list(query.entries())
         new._interpolation = self._interpolation
+        new._serializer = self._serializer
+        new._deserializer = self._deserializer
         return new
 
     def merge(self, other: "Temporal[T]", prefer_self: bool = True) -> "Temporal[T]":
@@ -292,6 +298,8 @@ class Temporal(Generic[T]):
         """
         new = Temporal[T]()
         new._interpolation = self._interpolation
+        new._serializer = self._serializer
+        new._deserializer = self._deserializer
 
         all_entries: Dict[datetime, T] = {}
 
@@ -308,31 +316,81 @@ class Temporal(Generic[T]):
 
         new._timeline = sorted(all_entries.items(), key=lambda x: x[0])
         return new
+    
+    def _serialize_value(self, value: T) -> Dict[str, Any]:
+        if self._serializer is not None:
+            payload = self._serializer(value)
+            if not isinstance(payload, dict) or "type" not in payload or "value" not in payload:
+                raise ValueError("Serializer must return a dict with 'type' and 'value' keys.")
+            return {"type": payload["type"], "value": payload["value"]}
+        
+        try:
+            json.dumps(value)
+        except TypeError as exc:
+            raise TypeError(
+                f"Temporal value of type {type(value).__name__} is not JSON serializable; "
+                "provide serializer/deserializer callables."
+            ) from exc
+        return {"type": None, "value": value}
+    
+    def _deserialize_value(self, payload: Dict[str, Any]) -> T:
+        value_type = payload.get("type")
+        if value_type is None:
+            return payload.get("value")  # type: ignore[return-value]
+        if self._deserializer is None:
+            raise ValueError(
+                "Temporal entry includes type metadata but no deserializer was provided."
+            )
+        return self._deserializer(payload)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
-            "entries": [(ts.isoformat(), v) for ts, v in self._timeline],
+            "entries": [
+                {"timestamp": ts.isoformat(), **self._serialize_value(v)}
+                for ts, v in self._timeline
+            ],
             "type": self.__class__.__name__,
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "Temporal[T]":
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        serializer: Optional[Callable[[T], Dict[str, Any]]] = None,
+        deserializer: Optional[Callable[[Dict[str, Any]], T]] = None,
+    ) -> "Temporal[T]":
         """Create from dictionary."""
-        new = cls()
-        for ts_str, value in data.get("entries", []):
-            ts = normalize_timestamp(datetime.fromisoformat(ts_str))
+        new = cls(serializer=serializer, deserializer=deserializer)
+        for entry in data.get("entries", []):
+            if isinstance(entry, (list, tuple)) and len(entry) == 2:
+                ts_str, value = entry
+                ts = datetime.fromisoformat(ts_str)
+                new._timeline.append((ts, value))
+                continue
+            if not isinstance(entry, dict):
+                raise ValueError("Temporal entries must be dicts with timestamp/value metadata.")
+            ts_str = entry.get("timestamp")
+            if ts_str is None:
+                raise ValueError("Temporal entry is missing a timestamp.")
+            ts = datetime.fromisoformat(ts_str)
+            value = new._deserialize_value({"type": entry.get("type"), "value": entry.get("value")})
             new._timeline.append((ts, value))
         return new
 
     def to_json(self) -> str:
         """Serialize to JSON string."""
-        return json.dumps(self.to_dict(), default=str)
+        return json.dumps(self.to_dict())
 
     @classmethod
-    def from_json(cls, json_str: str) -> "Temporal[T]":
+    def from_json(
+        cls,
+        json_str: str,
+        serializer: Optional[Callable[[T], Dict[str, Any]]] = None,
+        deserializer: Optional[Callable[[Dict[str, Any]], T]] = None,
+    ) -> "Temporal[T]":
         """Deserialize from JSON string."""
-        return cls.from_dict(json.loads(json_str))
+        return cls.from_dict(json.loads(json_str), serializer=serializer, deserializer=deserializer)
 
     def __getstate__(self) -> Dict[str, Any]:
         """Support for pickle serialization."""

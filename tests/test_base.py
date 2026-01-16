@@ -1,5 +1,6 @@
 """Tests for base Temporal class."""
 
+from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
@@ -7,6 +8,23 @@ import pytest
 from chronotype import Temporal
 from chronotype.exceptions import EmptyTemporalError, InvalidTimestampError
 
+
+@dataclass(frozen=True)
+class Widget:
+    name: str
+    count: int
+    
+def widget_serializer(value: Widget) -> dict:
+    if not isinstance(value, Widget):
+        raise TypeError("Unsupported type for widget serializer.")
+    return {"type": "Widget", "value": asdict(value)}
+
+
+def widget_deserializer(payload: dict) -> Widget:
+    if payload.get("type") != "Widget":
+        raise ValueError("Unsupported type for widget deserializer.")
+    return Widget(**payload["value"])
+        
 
 class TestTemporalBasics:
     def test_create_empty(self):
@@ -164,6 +182,26 @@ class TestTemporalBasics:
 
         assert t2.at(base_time) == 42
         assert len(t2) == 2
+        
+    def test_serialization_json_custom_type(self, base_time):
+        t = Temporal[Widget](serializer=widget_serializer, deserializer=widget_deserializer)
+        t[base_time] = Widget(name="alpha", count=1)
+        t[base_time + timedelta(days=1)] = Widget(name="beta", count=2)
+
+        json_str = t.to_json()
+        t2 = Temporal[Widget].from_json(
+            json_str, serializer=widget_serializer, deserializer=widget_deserializer
+        )
+
+        assert t2.at(base_time) == Widget(name="alpha", count=1)
+        assert t2.at(base_time + timedelta(days=1)) == Widget(name="beta", count=2)
+
+    def test_serialization_requires_serializer(self, base_time):
+        t = Temporal[Widget]()
+        t[base_time] = Widget(name="alpha", count=1)
+
+        with pytest.raises(TypeError, match="not JSON serializable"):
+            t.to_json()
 
     def test_repr(self, base_time):
         t = Temporal[int](initial=42, initial_time=base_time)
