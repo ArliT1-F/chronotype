@@ -6,14 +6,14 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 
 from chronotype import Temporal
-from chronotype.exceptions import EmptyTemporalError, InvalidTimestampError
+from chronotype.exceptions import EmptyTemporalError
 
 
 @dataclass(frozen=True)
 class Widget:
     name: str
     count: int
-    
+
 def widget_serializer(value: Widget) -> dict:
     if not isinstance(value, Widget):
         raise TypeError("Unsupported type for widget serializer.")
@@ -24,7 +24,7 @@ def widget_deserializer(payload: dict) -> Widget:
     if payload.get("type") != "Widget":
         raise ValueError("Unsupported type for widget deserializer.")
     return Widget(**payload["value"])
-        
+
 
 class TestTemporalBasics:
     def test_create_empty(self):
@@ -182,7 +182,7 @@ class TestTemporalBasics:
 
         assert t2.at(base_time) == 42
         assert len(t2) == 2
-        
+
     def test_serialization_json_custom_type(self, base_time):
         t = Temporal[Widget](serializer=widget_serializer, deserializer=widget_deserializer)
         t[base_time] = Widget(name="alpha", count=1)
@@ -232,7 +232,7 @@ class TestTemporalBasics:
         aware_time = datetime(2026, 1, 1, 1, 0, 0, tzinfo=timezone(timedelta(hours=1)))
         t[naive_time] = "first"
         t[aware_time] = "second"
-        
+
         assert len(t) == 1
         assert t.at(naive_time) == "second"
 
@@ -273,3 +273,311 @@ class TestTemporalQuery:
         query = t.between(time_series[0], time_series[9])
         assert query.first_value() == 10
         assert query.last_value() == 50
+
+
+class TestIndexConsistency:
+    """Regression guards for the cached timestamp index (#13)."""
+
+    def test_out_of_order_sets(self, base_time):
+        t = Temporal[int]()
+        for offset in [5, 1, 3, 2, 4, 0]:
+            t[base_time + timedelta(days=offset)] = offset
+        assert t.timestamps() == [base_time + timedelta(days=i) for i in range(6)]
+        assert t.at(base_time + timedelta(days=2, hours=1)) == 2
+
+    def test_overwrite_same_timestamp(self, base_time):
+        t = Temporal[int]()
+        t[base_time] = 1
+        t[base_time] = 2
+        assert len(t) == 1
+        assert t.at(base_time) == 2
+
+    def test_rollback_then_set(self, time_series):
+        t = Temporal[int]()
+        for i, ts in enumerate(time_series):
+            t[ts] = i
+        t.rollback(to=time_series[3])
+        assert t.at(time_series[8]) == 3
+        t.rollback(steps=2)
+        assert t.at(time_series[8]) == 1
+        t[time_series[5]] = 50
+        assert t.at(time_series[4]) == 1
+        assert t.at(time_series[6]) == 50
+        t.rollback(steps=100)
+        assert len(t) == 0
+        assert t.at(time_series[6]) is None
+
+    def test_clear_then_set(self, time_series):
+        t = Temporal[int]()
+        t[time_series[3]] = 3
+        t.clear()
+        assert t.at(time_series[5]) is None
+        t[time_series[1]] = 1
+        assert t.at(time_series[5]) == 1
+
+    def test_merge_result_is_searchable(self, time_series):
+        a = Temporal[int]()
+        a[time_series[0]] = 0
+        a[time_series[4]] = 4
+        b = Temporal[int]()
+        b[time_series[2]] = 2
+        merged = a.merge(b)
+        assert merged.at(time_series[3]) == 2
+        assert time_series[2] in merged
+        assert merged.between(time_series[1], time_series[3]).values() == [2]
+
+    def test_pickle_round_trip_is_searchable(self, time_series):
+        import pickle
+
+        t = Temporal[int]()
+        for i, ts in enumerate(time_series[:5]):
+            t[ts] = i
+        restored = pickle.loads(pickle.dumps(t))
+        assert restored.at(time_series[2]) == 2
+        restored[time_series[7]] = 7
+        assert restored.at(time_series[8]) == 7
+        assert restored.between(time_series[1], time_series[3]).values() == [1, 2, 3]
+        assert restored.to_json()  # serializer attributes restored after unpickling
+
+    def test_between_boundaries(self, time_series):
+        t = Temporal[int]()
+        for i, ts in enumerate(time_series):
+            t[ts] = i
+        s, e = time_series[2], time_series[5]
+        assert t.between(s, e).values() == [2, 3, 4, 5]
+        assert t.between(s, e, include_start=False).values() == [3, 4, 5]
+        assert t.between(s, e, include_end=False).values() == [2, 3, 4]
+        assert t.between(s, e, include_start=False, include_end=False).values() == [3, 4]
+        mid = time_series[2] + timedelta(hours=12)
+        assert t.between(mid, mid).values() == []
+        assert t.between(s, s).values() == [2]
+        assert t.between(s, s, include_start=False).values() == []
+
+
+class TestPerformance:
+    """Benchmarks (#13): lookups must be O(log n), not O(n)."""
+
+    N = 100_000
+
+    def _big(self, base_time):
+        data = {
+            "entries": [
+                {"timestamp": (base_time + timedelta(seconds=i)).isoformat(), "value": i}
+                for i in range(self.N)
+            ]
+        }
+        return Temporal[int].from_dict(data)
+
+    def test_at_lookups_on_100k_entries_are_fast(self, base_time):
+        import time
+
+        t = self._big(base_time)
+        assert len(t) == self.N
+        probes = [base_time + timedelta(seconds=(i * 7919) % self.N, milliseconds=500)
+                  for i in range(2_000)]
+        start = time.perf_counter()
+        for probe in probes:
+            t.at(probe)
+        elapsed = time.perf_counter() - start
+        assert t.at(base_time + timedelta(seconds=12_345, milliseconds=1)) == 12_345
+        assert elapsed < 0.5, f"2000 at() lookups took {elapsed:.3f}s"
+
+    def test_between_on_100k_entries_is_fast(self, base_time):
+        import time
+
+        t = self._big(base_time)
+        start = time.perf_counter()
+        for i in range(200):
+            lo = base_time + timedelta(seconds=i * 397)
+            q = t.between(lo, lo + timedelta(seconds=9))
+            assert len(q) == 10
+        elapsed = time.perf_counter() - start
+        assert elapsed < 0.5, f"200 between() calls took {elapsed:.3f}s"
+
+    def test_appending_in_order_is_fast(self, base_time):
+        import time
+
+        t = Temporal[int]()
+        start = time.perf_counter()
+        for i in range(20_000):
+            t[base_time + timedelta(seconds=i)] = i
+        elapsed = time.perf_counter() - start
+        assert len(t) == 20_000
+        assert elapsed < 2.0, f"20k in-order sets took {elapsed:.3f}s"
+
+
+class TestDerivedTemporalsKeepTypeAndConfig:
+    """Regression (#9): slice/merge/copy must keep the subclass and its settings."""
+
+    def _widgets(self, time_series):
+        t = Temporal[Widget](serializer=widget_serializer, deserializer=widget_deserializer)
+        for i, ts in enumerate(time_series[:4]):
+            t[ts] = Widget(name=f"w{i}", count=i)
+        return t
+
+    def test_slice_keeps_serializer(self, time_series):
+        sliced = self._widgets(time_series).slice(time_series[1], time_series[2])
+        assert len(sliced) == 2
+        assert "Widget" in sliced.to_json()
+
+    def test_merge_keeps_serializer(self, time_series):
+        t = self._widgets(time_series)
+        merged = t.merge(Temporal[Widget]())
+        assert merged == t
+        assert "Widget" in merged.to_json()
+
+    def test_copy_and_deepcopy_keep_serializer(self, time_series):
+        t = self._widgets(time_series)
+        assert "Widget" in t.copy().to_json()
+        assert "Widget" in t.deepcopy().to_json()
+
+    def test_custom_subclass_is_preserved(self, time_series):
+        class Tagged(Temporal[int]):
+            def __init__(self, tag: str = "default") -> None:
+                super().__init__()
+                self.tag = tag
+
+        t = Tagged(tag="mine")
+        for i, ts in enumerate(time_series[:5]):
+            t[ts] = i
+
+        for derived in (
+            t.copy(),
+            t.deepcopy(),
+            t.slice(time_series[1], time_series[3]),
+            t.merge(Tagged()),
+        ):
+            assert type(derived) is Tagged
+            assert derived.tag == "mine"
+
+    def test_derived_temporals_are_independent(self, time_series):
+        t = Temporal[int]()
+        t[time_series[0]] = 0
+        for derived in (t.copy(), t.slice(time_series[0], time_series[1]), t.merge(t)):
+            derived[time_series[5]] = 5
+            assert len(t) == 1
+            assert t.at(time_series[6]) == 0
+
+
+class TestSerializationConfig:
+    """Regression (#1): to_dict stores configuration that from_dict restores."""
+
+    def test_interpolation_is_stored_and_restored(self, base_time):
+        from chronotype import LinearInterpolation
+
+        t = Temporal[float](interpolation=LinearInterpolation())
+        t[base_time] = 0.0
+        t[base_time + timedelta(hours=2)] = 2.0
+        data = t.to_dict()
+        assert data["config"] == {"interpolation": "linear"}
+        restored = Temporal[float].from_dict(data)
+        assert restored.at(base_time + timedelta(hours=1)) == pytest.approx(1.0)
+
+    def test_payload_without_config_uses_class_default(self, base_time):
+        legacy = {
+            "entries": [{"timestamp": base_time.isoformat(), "type": None, "value": 1}],
+            "type": "Temporal",
+        }
+        restored = Temporal[int].from_dict(legacy)
+        assert restored.at(base_time + timedelta(days=1)) == 1
+
+    def test_custom_strategy_requires_explicit_interpolation(self, base_time):
+        from chronotype import InterpolationStrategy
+
+        class Always42(InterpolationStrategy[int]):
+            def interpolate(self, target, before, after):
+                return 42
+
+        t = Temporal[int](interpolation=Always42())
+        t[base_time] = 1
+        json_str = t.to_json()
+        with pytest.raises(ValueError, match="Always42"):
+            Temporal[int].from_json(json_str)
+        restored = Temporal[int].from_json(json_str, interpolation=Always42())
+        assert restored.at(base_time) == 42
+
+    def test_entries_are_sorted_on_load(self, base_time):
+        later = (base_time + timedelta(days=1)).isoformat()
+        data = {
+            "entries": [
+                {"timestamp": later, "type": None, "value": 2},
+                {"timestamp": base_time.isoformat(), "type": None, "value": 1},
+            ]
+        }
+        restored = Temporal[int].from_dict(data)
+        assert restored.values() == [1, 2]
+        assert restored.at(base_time + timedelta(hours=1)) == 1
+
+
+class TestEqualityAndSetNow:
+    """#14: structural __eq__, point-by-point eq()/ne(), set_now()."""
+
+    def test_eq_operator_is_structural_bool(self, time_series):
+        from chronotype import TemporalInt
+
+        a = TemporalInt()
+        a[time_series[0]] = 1
+        b = a.copy()
+        assert (a == b) is True
+        b[time_series[1]] = 1
+        assert (a == b) is False
+        assert (a != b) is True
+        assert a.__eq__(1) is NotImplemented
+
+    def test_eq_and_ne_with_scalar(self, time_series):
+        from chronotype import TemporalBool
+
+        t = Temporal[str]()
+        t[time_series[0]] = "a"
+        t[time_series[1]] = "b"
+        eq = t.eq("a")
+        assert isinstance(eq, TemporalBool)
+        assert eq.history() == [(time_series[0], True), (time_series[1], False)]
+        assert t.ne("a").history() == [(time_series[0], False), (time_series[1], True)]
+
+    def test_eq_with_temporal_is_aligned(self, time_series):
+        from chronotype import TemporalFloat, TemporalInt
+
+        a = TemporalInt()
+        a[time_series[0]] = 1
+        a[time_series[2]] = 2
+        b = TemporalFloat()
+        b[time_series[1]] = 1.0
+        b[time_series[3]] = 2.0
+        assert a.eq(b).history() == [
+            (time_series[1], True),
+            (time_series[2], False),
+            (time_series[3], True),
+        ]
+        assert a.ne(b).at(time_series[2]) is True
+
+    def test_eq_on_containers(self, base_time):
+        from chronotype import TemporalList
+
+        t = TemporalList(initial=[1, 2], initial_time=base_time)
+        assert t.eq([1, 2]).at(base_time) is True
+        assert t.ne([2, 1]).at(base_time) is True
+
+    def test_set_now(self):
+        from chronotype.utils import now
+
+        t = Temporal[int]()
+        before = now()
+        t.set_now(5)
+        after = now()
+        (ts, value), = t.history()
+        assert value == 5
+        assert before <= ts <= after
+        assert ts.tzinfo is not None
+        t.set_now(6)
+        assert t.current() == 6
+        assert len(t) == 2
+
+    def test_set_now_on_containers_stores_copy(self):
+        from chronotype import TemporalList
+
+        t = TemporalList()
+        items = [1]
+        t.set_now(items)
+        items.append(2)
+        assert t.current() == [1]

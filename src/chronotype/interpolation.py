@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Generic, List, Optional, Tuple, TypeVar
+from typing import Any, Generic, Optional, TypeVar
 
 T = TypeVar("T")
 N = TypeVar("N", int, float)
@@ -15,8 +15,8 @@ class InterpolationStrategy(ABC, Generic[T]):
     def interpolate(
         self,
         target: datetime,
-        before: Optional[Tuple[datetime, T]],
-        after: Optional[Tuple[datetime, T]],
+        before: Optional[tuple[datetime, T]],
+        after: Optional[tuple[datetime, T]],
     ) -> Optional[T]:
         """
         Interpolate a value at the target timestamp.
@@ -41,8 +41,8 @@ class StepInterpolation(InterpolationStrategy[T]):
     def interpolate(
         self,
         target: datetime,
-        before: Optional[Tuple[datetime, T]],
-        after: Optional[Tuple[datetime, T]],
+        before: Optional[tuple[datetime, T]],
+        after: Optional[tuple[datetime, T]],
     ) -> Optional[T]:
         if before is not None:
             return before[1]
@@ -53,13 +53,17 @@ class LinearInterpolation(InterpolationStrategy[N]):
     """
     Linear interpolation for numeric types.
     Calculates value based on linear progression between points.
+
+    When both neighbouring values are ints the result is rounded to the
+    nearest int with :func:`round` (round-half-to-even, so -1.5 -> -2,
+    0.5 -> 0, 1.5 -> 2) so that TemporalInt.at() always returns an int.
     """
 
     def interpolate(
         self,
         target: datetime,
-        before: Optional[Tuple[datetime, N]],
-        after: Optional[Tuple[datetime, N]],
+        before: Optional[tuple[datetime, N]],
+        after: Optional[tuple[datetime, N]],
     ) -> Optional[N]:
         if before is None and after is None:
             return None
@@ -86,7 +90,9 @@ class LinearInterpolation(InterpolationStrategy[N]):
         result = before_val + (after_val - before_val) * ratio
 
         if isinstance(before_val, int) and isinstance(after_val, int):
-            return int(result)
+            # Integer endpoints yield an integer: round to the nearest value
+            # (ties go to the even neighbour, as with built-in round()).
+            return round(result)
         return result
 
 
@@ -99,8 +105,8 @@ class NearestInterpolation(InterpolationStrategy[T]):
     def interpolate(
         self,
         target: datetime,
-        before: Optional[Tuple[datetime, T]],
-        after: Optional[Tuple[datetime, T]],
+        before: Optional[tuple[datetime, T]],
+        after: Optional[tuple[datetime, T]],
     ) -> Optional[T]:
         if before is None and after is None:
             return None
@@ -117,3 +123,35 @@ class NearestInterpolation(InterpolationStrategy[T]):
         if before_delta <= after_delta:
             return before[1]
         return after[1]
+
+
+_BUILTIN_STRATEGIES: dict[str, type[InterpolationStrategy[Any]]] = {
+    "step": StepInterpolation,
+    "linear": LinearInterpolation,
+    "nearest": NearestInterpolation,
+}
+
+
+def strategy_to_name(strategy: InterpolationStrategy[Any]) -> str:
+    """
+    Name used to serialize an interpolation strategy.
+
+    Built-in strategies map to ``"step"``, ``"linear"`` or ``"nearest"``; any
+    other strategy is identified by its class name and must be supplied
+    explicitly when deserializing.
+    """
+    for name, cls in _BUILTIN_STRATEGIES.items():
+        if type(strategy) is cls:
+            return name
+    return type(strategy).__qualname__
+
+
+def strategy_from_name(name: str) -> InterpolationStrategy[Any]:
+    """Instantiate a built-in strategy from its serialized name."""
+    try:
+        return _BUILTIN_STRATEGIES[name]()
+    except KeyError:
+        raise ValueError(
+            f"Unknown interpolation strategy {name!r}; pass interpolation=... to "
+            "from_dict()/from_json() to restore custom strategies."
+        ) from None

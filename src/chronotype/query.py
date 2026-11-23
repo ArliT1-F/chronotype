@@ -1,17 +1,12 @@
 """Query objects for temporal range operations."""
 
-from datetime import datetime, timedelta
+from collections.abc import Iterator
+from datetime import datetime
 from typing import (
-    TYPE_CHECKING,
     Callable,
     Generic,
-    Iterator,
-    List,
     Optional,
-    Tuple,
     TypeVar,
-    Union,
-    cast,
 )
 
 from chronotype.exceptions import EmptyTemporalError
@@ -28,7 +23,7 @@ class TemporalQuery(Generic[T]):
 
     def __init__(
         self,
-        entries: List[Tuple[datetime, T]],
+        entries: list[tuple[datetime, T]],
         start: datetime,
         end: datetime,
         include_start: bool = True,
@@ -50,15 +45,15 @@ class TemporalQuery(Generic[T]):
         """End of the query range."""
         return self._end
 
-    def entries(self) -> List[Tuple[datetime, T]]:
+    def entries(self) -> list[tuple[datetime, T]]:
         """Get all entries in the range as (timestamp, value) tuples."""
         return list(self._entries)
 
-    def values(self) -> List[T]:
+    def values(self) -> list[T]:
         """Get all values in the range."""
         return [v for _, v in self._entries]
 
-    def timestamps(self) -> List[datetime]:
+    def timestamps(self) -> list[datetime]:
         """Get all timestamps in the range."""
         return [ts for ts, _ in self._entries]
 
@@ -70,13 +65,13 @@ class TemporalQuery(Generic[T]):
         """Check if the query result is empty."""
         return len(self._entries) == 0
 
-    def first(self) -> Optional[Tuple[datetime, T]]:
+    def first(self) -> Optional[tuple[datetime, T]]:
         """Get the first entry in the range."""
         if self._entries:
             return self._entries[0]
         return None
 
-    def last(self) -> Optional[Tuple[datetime, T]]:
+    def last(self) -> Optional[tuple[datetime, T]]:
         """Get the last entry in the range."""
         if self._entries:
             return self._entries[-1]
@@ -114,7 +109,7 @@ class TemporalQuery(Generic[T]):
             self._include_end,
         )
 
-    def __iter__(self) -> Iterator[Tuple[datetime, T]]:
+    def __iter__(self) -> Iterator[tuple[datetime, T]]:
         return iter(self._entries)
 
     def __len__(self) -> int:
@@ -125,11 +120,21 @@ class TemporalQuery(Generic[T]):
 
 
 class NumericTemporalQuery(TemporalQuery[N]):
-    """Query with numeric aggregation methods."""
+    """
+    Query with numeric aggregation methods.
+
+    ``value_before_range`` is the value carried into the range: the value in
+    effect at ``start`` that comes from an entry *not* included in
+    ``entries`` (an entry before ``start``, or the entry exactly at ``start``
+    when ``include_start=False``). It counts for :meth:`min`, :meth:`max` and
+    :meth:`average` while it is in effect, i.e. unless an included entry sits
+    exactly at ``start``. The other statistics (``sum``, ``median``,
+    ``variance``, ``delta``...) only use the entries inside the range.
+    """
 
     def __init__(
         self,
-        entries: List[Tuple[datetime, N]],
+        entries: list[tuple[datetime, N]],
         start: datetime,
         end: datetime,
         include_start: bool = True,
@@ -139,53 +144,55 @@ class NumericTemporalQuery(TemporalQuery[N]):
         super().__init__(entries, start, end, include_start, include_end)  # type: ignore[arg-type]
         self._value_before_range: Optional[N] = value_before_range
 
+    @property
+    def value_before_range(self) -> Optional[N]:
+        """The value carried into the range (``None`` if there is none)."""
+        return self._value_before_range
+
+    def _effective_entries(self) -> list[tuple[datetime, N]]:
+        """Entries in the range, preceded by the carried-in value while it is in effect."""
+        carried = self._value_before_range
+        if carried is not None and (not self._entries or self._entries[0][0] > self._start):
+            return [(self._start, carried)] + self._entries
+        return list(self._entries)
+
     def min(self) -> N:
-        """Get the minimum value in the range."""
-        if not self._entries:
+        """Get the minimum value in effect during the range (incl. the carried-in value)."""
+        effective = self._effective_entries()
+        if not effective:
             raise EmptyTemporalError("Cannot compute min of empty query result")
-        return min(v for _, v in self._entries)
+        return min(v for _, v in effective)
 
     def max(self) -> N:
-        """Get the maximum value in the range."""
-        if not self._entries:
+        """Get the maximum value in effect during the range (incl. the carried-in value)."""
+        effective = self._effective_entries()
+        if not effective:
             raise EmptyTemporalError("Cannot compute max of empty query result")
-        return max(v for _, v in self._entries)
+        return max(v for _, v in effective)
 
     def sum(self) -> N:
         """Get the sum of all values in the range."""
         if not self._entries:
-            return cast(N, 0)
-        return cast(N, sum(v for _, v in self._entries))
+            return 0
+        return sum(v for _, v in self._entries)
 
     def average(self) -> float:
         """
-        Get the time-weighted average of values in the range.
-        Each value is weighted by how long it was active.
-        """
-        if not self._entries:
-            raise EmptyTemporalError("Cannot compute average of empty query result")
+        Get the time-weighted average of the values in effect during the range.
 
-        if len(self._entries) == 1:
-            return float(self._entries[0][1])
+        Each value is weighted by how long it was active within ``[start, end]``,
+        including the carried-in value from ``start`` until the first entry. If
+        the range has zero length, the value in effect at ``start`` is returned.
+        """
+        effective = self._effective_entries()
+        if not effective:
+            raise EmptyTemporalError("Cannot compute average of empty query result")
 
         total_weight = 0.0
         weighted_sum = 0.0
 
-        effective_entries: List[Tuple[datetime, N]] = []
-
-        if self._value_before_range is not None:
-            effective_entries.append((self._start, self._value_before_range))
-
-        effective_entries.extend(self._entries)
-
-        for i in range(len(effective_entries)):
-            ts, value = effective_entries[i]
-
-            if i + 1 < len(effective_entries):
-                next_ts = effective_entries[i + 1][0]
-            else:
-                next_ts = self._end
-
+        for i, (ts, value) in enumerate(effective):
+            next_ts = effective[i + 1][0] if i + 1 < len(effective) else self._end
             start_time = max(ts, self._start)
             end_time = min(next_ts, self._end)
 
@@ -195,7 +202,7 @@ class NumericTemporalQuery(TemporalQuery[N]):
                 total_weight += duration
 
         if total_weight == 0:
-            return float(self._entries[-1][1]) if self._entries else 0.0
+            return float(effective[0][1])
 
         return float(weighted_sum / total_weight)
 
