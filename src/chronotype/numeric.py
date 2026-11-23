@@ -97,8 +97,9 @@ class _TemporalNumeric(Temporal[_N]):
             raise InvalidTimestampError("Start must be before or equal to end")
 
         lo, hi = self._range_bounds(start_dt, end_dt, include_start, include_end)
-        before_idx = self._find_index_left(start_dt) - 1
-        value_before = self._timeline[before_idx][1] if before_idx >= 0 else None
+        # The value carried into the range is the latest entry *not* included:
+        # before ``start`` (or exactly at ``start`` when include_start=False).
+        value_before = self._timeline[lo - 1][1] if lo > 0 else None
         return NumericTemporalQuery(
             self._timeline[lo:hi], start_dt, end_dt, include_start, include_end, value_before
         )
