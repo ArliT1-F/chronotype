@@ -404,3 +404,56 @@ class TestPerformance:
         elapsed = time.perf_counter() - start
         assert len(t) == 20_000
         assert elapsed < 2.0, f"20k in-order sets took {elapsed:.3f}s"
+
+
+class TestDerivedTemporalsKeepTypeAndConfig:
+    """Regression (#9): slice/merge/copy must keep the subclass and its settings."""
+
+    def _widgets(self, time_series):
+        t = Temporal[Widget](serializer=widget_serializer, deserializer=widget_deserializer)
+        for i, ts in enumerate(time_series[:4]):
+            t[ts] = Widget(name=f"w{i}", count=i)
+        return t
+
+    def test_slice_keeps_serializer(self, time_series):
+        sliced = self._widgets(time_series).slice(time_series[1], time_series[2])
+        assert len(sliced) == 2
+        assert "Widget" in sliced.to_json()
+
+    def test_merge_keeps_serializer(self, time_series):
+        t = self._widgets(time_series)
+        merged = t.merge(Temporal[Widget]())
+        assert merged == t
+        assert "Widget" in merged.to_json()
+
+    def test_copy_and_deepcopy_keep_serializer(self, time_series):
+        t = self._widgets(time_series)
+        assert "Widget" in t.copy().to_json()
+        assert "Widget" in t.deepcopy().to_json()
+
+    def test_custom_subclass_is_preserved(self, time_series):
+        class Tagged(Temporal[int]):
+            def __init__(self, tag: str = "default") -> None:
+                super().__init__()
+                self.tag = tag
+
+        t = Tagged(tag="mine")
+        for i, ts in enumerate(time_series[:5]):
+            t[ts] = i
+
+        for derived in (
+            t.copy(),
+            t.deepcopy(),
+            t.slice(time_series[1], time_series[3]),
+            t.merge(Tagged()),
+        ):
+            assert type(derived) is Tagged
+            assert derived.tag == "mine"
+
+    def test_derived_temporals_are_independent(self, time_series):
+        t = Temporal[int]()
+        t[time_series[0]] = 0
+        for derived in (t.copy(), t.slice(time_series[0], time_series[1]), t.merge(t)):
+            derived[time_series[5]] = 5
+            assert len(t) == 1
+            assert t.at(time_series[6]) == 0

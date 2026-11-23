@@ -189,3 +189,30 @@ class TestEmptyInitialContainer:
     def test_none_initial_creates_no_entry(self):
         assert len(TemporalList()) == 0
         assert len(TemporalDict()) == 0
+
+
+class TestDerivedContainers:
+    """Regression (#9): slice/merge/deepcopy keep the container type."""
+
+    def test_list_slice_and_merge(self, base_time):
+        t = TemporalList(initial=[1], initial_time=base_time)
+        t.append(2, base_time + timedelta(days=1))
+        sliced = t.slice(base_time, base_time + timedelta(days=1))
+        merged = t.merge(TemporalList())
+        for derived in (sliced, merged, t.deepcopy()):
+            assert isinstance(derived, TemporalList)
+            assert derived.contains_at(base_time + timedelta(days=1), 2)
+
+    def test_list_copy_does_not_share_snapshots(self, base_time):
+        t = TemporalList(initial=[1], initial_time=base_time)
+        for derived in (t.copy(), t.slice(base_time, base_time), t.merge(TemporalList())):
+            derived.history()[0][1].append(99)
+            assert t.at(base_time) == [1]
+
+    def test_dict_slice_and_merge(self, base_time):
+        t = TemporalDict(initial={"a": 1}, initial_time=base_time)
+        sliced = t.slice(base_time, base_time)
+        merged = t.merge(TemporalDict())
+        for derived in (sliced, merged, t.deepcopy()):
+            assert isinstance(derived, TemporalDict)
+            assert derived.key_history("a") == [(base_time, 1)]

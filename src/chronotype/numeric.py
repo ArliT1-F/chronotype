@@ -205,12 +205,6 @@ class TemporalFloat(Temporal[float]):
                 result[ts] = op(v1, v2)
         return result
 
-    def copy(self) -> TemporalFloat:
-        """Create a copy."""
-        new = TemporalFloat(interpolate=self._interpolate)
-        new._set_timeline(list(self._timeline))
-        return new
-
 
 class TemporalInt(Temporal[int]):
     """
@@ -420,12 +414,6 @@ class TemporalInt(Temporal[int]):
             result[ts] = float(v)
         return result
 
-    def copy(self) -> TemporalInt:
-        """Create a copy."""
-        new = TemporalInt()
-        new._set_timeline(list(self._timeline))
-        return new
-
 
 class TemporalBool(Temporal[bool]):
     """
@@ -550,12 +538,6 @@ class TemporalBool(Temporal[bool]):
         """Total seconds when value was False."""
         return sum((end - start).total_seconds() for start, end in self.when_false())
 
-    def copy(self) -> TemporalBool:
-        """Create a copy."""
-        new = TemporalBool()
-        new._set_timeline(list(self._timeline))
-        return new
-
 
 class TemporalString(Temporal[str]):
     """
@@ -618,9 +600,3 @@ class TemporalString(Temporal[str]):
         for ts, v in self._timeline:
             result[ts] = len(v)
         return result
-
-    def copy(self) -> TemporalString:
-        """Create a copy."""
-        new = TemporalString()
-        new._set_timeline(list(self._timeline))
-        return new

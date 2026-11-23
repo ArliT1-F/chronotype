@@ -202,3 +202,50 @@ class TestTemporalBool:
 
         duration = t.duration_true()
         assert duration >= 7200
+
+
+class TestDerivedNumericTemporals:
+    """Regression (#9): slice/merge/copy keep TemporalInt/TemporalFloat behaviour."""
+
+    def test_int_slice_is_temporal_int(self, time_series):
+        t = TemporalInt()
+        for i, ts in enumerate(time_series):
+            t[ts] = i * 10
+        sliced = t.slice(time_series[2], time_series[5])
+        assert isinstance(sliced, TemporalInt)
+        assert sliced.between(time_series[2], time_series[5]).average() == pytest.approx(30.0)
+        assert isinstance(sliced + 1, TemporalInt)
+
+    def test_int_merge_is_temporal_int(self, time_series):
+        a = TemporalInt()
+        a[time_series[0]] = 1
+        b = TemporalInt()
+        b[time_series[1]] = 3
+        merged = a.merge(b)
+        assert isinstance(merged, TemporalInt)
+        assert merged.between(time_series[0], time_series[2]).max() == 3
+
+    def test_float_slice_merge_copy_keep_interpolation(self, base_time):
+        t = TemporalFloat(interpolate=True)
+        t[base_time] = 0.0
+        t[base_time + timedelta(hours=2)] = 20.0
+        t[base_time + timedelta(hours=4)] = 40.0
+        mid = base_time + timedelta(hours=1)
+
+        for derived in (
+            t.copy(),
+            t.deepcopy(),
+            t.slice(base_time, base_time + timedelta(hours=2)),
+            t.merge(TemporalFloat()),
+        ):
+            assert isinstance(derived, TemporalFloat)
+            assert derived.at(mid) == pytest.approx(10.0)
+
+    def test_bool_and_string_copy_keep_type(self, base_time):
+        from chronotype.numeric import TemporalString
+
+        b = TemporalBool(initial=True, initial_time=base_time)
+        s = TemporalString(initial="x", initial_time=base_time)
+        assert isinstance(b.slice(base_time, base_time), TemporalBool)
+        assert isinstance(s.merge(TemporalString()), TemporalString)
+        assert isinstance(s.deepcopy(), TemporalString)

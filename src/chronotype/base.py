@@ -15,6 +15,7 @@ from chronotype.query import TemporalQuery
 from chronotype.utils import TimestampType, normalize_timestamp, now
 
 T = TypeVar("T")
+_TemporalT = TypeVar("_TemporalT", bound="Temporal[Any]")
 
 
 class Temporal(Generic[T]):
@@ -257,22 +258,38 @@ class Temporal(Generic[T]):
             return NotImplemented
         return self._timeline == other._timeline
 
-    def copy(self) -> Temporal[T]:
-        """Create a shallow copy."""
-        new = Temporal[T]()
-        new._set_timeline(list(self._timeline))
-        new._interpolation = self._interpolation
-        new._serializer = self._serializer
-        new._deserializer = self._deserializer
+    def _empty_like(self: _TemporalT) -> _TemporalT:
+        """
+        Create an empty temporal of the same class with the same configuration.
+
+        Interpolation strategy, serializer/deserializer and any extra attributes a
+        subclass sets are carried over; only the timeline is left empty.
+        """
+        cls = type(self)
+        new = cls.__new__(cls)
+        new.__dict__.update(self.__dict__)
+        new._set_timeline([])
         return new
 
-    def deepcopy(self) -> Temporal[T]:
-        """Create a deep copy."""
-        new = Temporal[T]()
+    def _copy_value(self, value: T) -> T:
+        """
+        Copy a stored value when a timeline is duplicated (copy/slice/merge).
+
+        Values are shared by default; mutable container subclasses override this
+        so derived temporals never share snapshots with the original.
+        """
+        return value
+
+    def copy(self: _TemporalT) -> _TemporalT:
+        """Create a shallow copy of the same type and configuration."""
+        new = self._empty_like()
+        new._set_timeline([(ts, self._copy_value(v)) for ts, v in self._timeline])
+        return new
+
+    def deepcopy(self: _TemporalT) -> _TemporalT:
+        """Create a deep copy (values are deep-copied) of the same type and configuration."""
+        new = self._empty_like()
         new._set_timeline([(ts, copy.deepcopy(v)) for ts, v in self._timeline])
-        new._interpolation = self._interpolation
-        new._serializer = self._serializer
-        new._deserializer = self._deserializer
         return new
 
     def timestamps(self) -> list[datetime]:
@@ -283,17 +300,21 @@ class Temporal(Generic[T]):
         """Get all values."""
         return [v for _, v in self._timeline]
 
-    def slice(self, start: TimestampType, end: TimestampType) -> Temporal[T]:
-        """Create a new Temporal containing only entries in the range."""
-        query = self.between(start, end)
-        new = Temporal[T]()
-        new._set_timeline(query.entries())
-        new._interpolation = self._interpolation
-        new._serializer = self._serializer
-        new._deserializer = self._deserializer
+    def slice(self: _TemporalT, start: TimestampType, end: TimestampType) -> _TemporalT:
+        """
+        Create a new temporal (same type and configuration) containing only the
+        entries in the inclusive range ``[start, end]``.
+        """
+        start_dt = normalize_timestamp(start)
+        end_dt = normalize_timestamp(end)
+        if start_dt > end_dt:
+            raise InvalidTimestampError("Start must be before or equal to end")
+        lo, hi = self._range_bounds(start_dt, end_dt, True, True)
+        new = self._empty_like()
+        new._set_timeline([(ts, self._copy_value(v)) for ts, v in self._timeline[lo:hi]])
         return new
 
-    def merge(self, other: Temporal[T], prefer_self: bool = True) -> Temporal[T]:
+    def merge(self: _TemporalT, other: Temporal[Any], prefer_self: bool = True) -> _TemporalT:
         """
         Merge with another temporal.
 
@@ -302,27 +323,19 @@ class Temporal(Generic[T]):
             prefer_self: If True, prefer this temporal's values on conflict
 
         Returns:
-            New merged Temporal
+            A new temporal of the same type and configuration as ``self``
         """
-        new = Temporal[T]()
-        new._interpolation = self._interpolation
-        new._serializer = self._serializer
-        new._deserializer = self._deserializer
+        first, second = (other, self) if prefer_self else (self, other)
+        all_entries: dict[datetime, Any] = {}
+        for ts, v in first._timeline:
+            all_entries[ts] = v
+        for ts, v in second._timeline:
+            all_entries[ts] = v
 
-        all_entries: dict[datetime, T] = {}
-
-        if prefer_self:
-            for ts, v in other._timeline:
-                all_entries[ts] = v
-            for ts, v in self._timeline:
-                all_entries[ts] = v
-        else:
-            for ts, v in self._timeline:
-                all_entries[ts] = v
-            for ts, v in other._timeline:
-                all_entries[ts] = v
-
-        new._set_timeline(sorted(all_entries.items(), key=lambda x: x[0]))
+        new = self._empty_like()
+        new._set_timeline(
+            [(ts, self._copy_value(v)) for ts, v in sorted(all_entries.items(), key=lambda x: x[0])]
+        )
         return new
 
     def _serialize_value(self, value: T) -> dict[str, Any]:

@@ -130,11 +130,8 @@ class TemporalList(Temporal[list[T]]):
             return lst[index]
         return None
 
-    def copy(self) -> TemporalList[T]:
-        """Create a deep copy."""
-        new = TemporalList[T]()
-        new._set_timeline([(ts, list(v)) for ts, v in self._timeline])
-        return new
+    def _copy_value(self, value: list[T]) -> list[T]:
+        return list(value)
 
 
 class TemporalDict(Temporal[dict[K, V]]):
@@ -269,8 +266,5 @@ class TemporalDict(Temporal[dict[K, V]]):
 
         return history
 
-    def copy(self) -> TemporalDict[K, V]:
-        """Create a deep copy."""
-        new = TemporalDict[K, V]()
-        new._set_timeline([(ts, dict(v)) for ts, v in self._timeline])
-        return new
+    def _copy_value(self, value: dict[K, V]) -> dict[K, V]:
+        return dict(value)
