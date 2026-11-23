@@ -1,5 +1,7 @@
 """Tests for numeric temporal types."""
 
+import math
+import operator
 from datetime import timedelta
 
 import pytest
@@ -410,3 +412,242 @@ class TestIntLinearInterpolationRounding:
     def test_result_is_int(self, base_time):
         value = self._linear_int(base_time, 0, 3).at(base_time + timedelta(hours=1))
         assert type(value) is int
+
+
+_ARITH_OPS = [
+    operator.add,
+    operator.sub,
+    operator.mul,
+    operator.truediv,
+    operator.floordiv,
+    operator.mod,
+    operator.pow,
+]
+_LEFT = {"int": [3, 7, 2], "float": [3.5, 7.25, 2.0]}
+_RIGHT = {"int": [2, 5, 4], "float": [1.5, 2.5, 4.0]}
+
+
+def _operand(kind, values, time_series):
+    """A TemporalInt/TemporalFloat over ``values`` or the first value as a scalar."""
+    if kind == "TemporalInt":
+        t = TemporalInt()
+    elif kind == "TemporalFloat":
+        t = TemporalFloat()
+    else:
+        return values[0]
+    for ts, v in zip(time_series, values):
+        t[ts] = v
+    return t
+
+
+class TestOperatorSemantics:
+    """Regression (#6/#7): one operator implementation matching Python's numeric rules."""
+
+    @pytest.mark.parametrize("op", _ARITH_OPS, ids=lambda o: o.__name__)
+    @pytest.mark.parametrize(
+        "left, right",
+        [
+            (left, right)
+            for left in ("TemporalInt", "TemporalFloat", "int", "float")
+            for right in ("TemporalInt", "TemporalFloat", "int", "float")
+            if "Temporal" in left or "Temporal" in right
+        ],
+    )
+    def test_matches_python_scalar_semantics(self, op, left, right, time_series):
+        lvals = _LEFT["float" if "Float" in left or left == "float" else "int"]
+        rvals = _RIGHT["float" if "Float" in right or right == "float" else "int"]
+        if left in ("int", "float"):
+            lvals = [lvals[0]] * 3
+        if right in ("int", "float"):
+            rvals = [rvals[0]] * 3
+
+        result = op(_operand(left, lvals, time_series), _operand(right, rvals, time_series))
+
+        expected = [op(a, b) for a, b in zip(lvals, rvals)]
+        expected_cls = TemporalFloat if any(isinstance(v, float) for v in expected) else TemporalInt
+        assert type(result) is expected_cls
+        assert result.values() == pytest.approx(expected)
+        assert result.timestamps() == time_series[:3]
+
+    def test_int_plus_float_scalar_promotes(self, base_time):
+        t = TemporalInt(initial=1, initial_time=base_time)
+        for result in (t + 1.5, 1.5 + t, t - 0.5, t * 2.5, t**0.5):
+            assert isinstance(result, TemporalFloat)
+        assert (t + 1.5).at(base_time) == 2.5
+        assert (10.0 - t).at(base_time) == 9.0
+
+    def test_int_with_temporal_float_promotes(self, base_time):
+        i = TemporalInt(initial=3, initial_time=base_time)
+        f = TemporalFloat(initial=0.5, initial_time=base_time)
+        for result in (i + f, f + i, i - f, i * f, i / f, i // f, i % f, i**f, f**i):
+            assert isinstance(result, TemporalFloat)
+        assert (i + f).at(base_time) == 3.5
+
+    def test_int_with_int_stays_int(self, base_time):
+        a = TemporalInt(initial=7, initial_time=base_time)
+        b = TemporalInt(initial=2, initial_time=base_time)
+        for result in (a + b, a - b, a * b, a // b, a % b, a**b, -a, +a, abs(a), a + 1, 1 + a):
+            assert type(result) is TemporalInt
+        assert isinstance(a / b, TemporalFloat)
+
+    def test_int_negative_power_promotes(self, base_time):
+        t = TemporalInt(initial=2, initial_time=base_time)
+        result = t**-1
+        assert isinstance(result, TemporalFloat)
+        assert result.at(base_time) == 0.5
+
+    @pytest.mark.parametrize("op", _ARITH_OPS, ids=lambda o: o.__name__)
+    def test_bool_scalar_rejected(self, op, base_time):
+        for t in (TemporalInt(initial=1, initial_time=base_time),
+                  TemporalFloat(initial=1.0, initial_time=base_time)):
+            with pytest.raises(TypeError):
+                op(t, True)
+            with pytest.raises(TypeError):
+                op(False, t)
+
+    def test_bool_comparison_rejected(self, base_time):
+        t = TemporalInt(initial=1, initial_time=base_time)
+        with pytest.raises(TypeError):
+            t < True  # noqa: B015
+        with pytest.raises(TypeError):
+            t >= TemporalBool(initial=True, initial_time=base_time)  # noqa: B015
+
+    @pytest.mark.parametrize("other", ["x", None, [1], {"a": 1}])
+    def test_unsupported_operands_raise_type_error(self, other, base_time):
+        t = TemporalInt(initial=1, initial_time=base_time)
+        assert t.__add__(other) is NotImplemented
+        assert t.__rsub__(other) is NotImplemented
+        assert t.__lt__(other) is NotImplemented
+        with pytest.raises(TypeError):
+            t + other
+        with pytest.raises(TypeError):
+            other * t
+        with pytest.raises(TypeError):
+            t < other  # noqa: B015
+
+    def test_unsupported_temporal_operands_raise_type_error(self, base_time):
+        from chronotype.numeric import TemporalString
+
+        i = TemporalInt(initial=1, initial_time=base_time)
+        s = TemporalString(initial="a", initial_time=base_time)
+        b = TemporalBool(initial=True, initial_time=base_time)
+        with pytest.raises(TypeError):
+            i + s
+        with pytest.raises(TypeError):
+            s + i
+        with pytest.raises(TypeError):
+            i * b
+        with pytest.raises(TypeError):
+            b & 1
+        with pytest.raises(TypeError):
+            1 | b
+        with pytest.raises(TypeError):
+            s + 1
+        with pytest.raises(TypeError):
+            1 + s
+
+    def test_timestamp_alignment(self, time_series):
+        a = TemporalInt()
+        a[time_series[0]] = 1
+        a[time_series[2]] = 3
+        b = TemporalInt()
+        b[time_series[1]] = 10
+        b[time_series[3]] = 30
+        result = a + b
+        # nothing at time_series[0]: b has no value yet
+        assert result.history() == [
+            (time_series[1], 11),
+            (time_series[2], 13),
+            (time_series[3], 33),
+        ]
+
+    def test_result_keeps_interpolation_of_temporal_operand(self, base_time):
+        f = TemporalFloat(interpolation=LinearInterpolation())
+        f[base_time] = 0.0
+        f[base_time + timedelta(hours=2)] = 2.0
+        mid = base_time + timedelta(hours=1)
+        assert (f + 1).at(mid) == pytest.approx(2.0)
+        assert (1 + f).at(mid) == pytest.approx(2.0)
+        assert (-f).at(mid) == pytest.approx(-1.0)
+
+        i = TemporalInt(interpolation=LinearInterpolation())
+        i[base_time] = 0
+        i[base_time + timedelta(hours=2)] = 20
+        assert (i + 0.5).at(mid) == pytest.approx(10.5)
+        assert i.to_float().at(mid) == pytest.approx(10.0)
+
+    def test_comparisons_mixed(self, base_time):
+        i = TemporalInt(initial=2, initial_time=base_time)
+        f = TemporalFloat(initial=2.5, initial_time=base_time)
+        assert (i < f).at(base_time) is True
+        assert (f <= i).at(base_time) is False
+        assert (i > 1.5).at(base_time) is True
+        assert (f >= 2.5).at(base_time) is True
+        assert isinstance(i < f, TemporalBool)
+
+    def test_float_has_floordiv_and_mod(self, base_time):
+        f = TemporalFloat(initial=7.5, initial_time=base_time)
+        assert (f // 2).at(base_time) == 3.0
+        assert (f % 2).at(base_time) == 1.5
+        assert (8 // f).at(base_time) == 1.0
+        assert (2**f).at(base_time) == pytest.approx(2**7.5)
+
+
+class TestDivisionByZero:
+    """Regression (#8): a zero divisor must not carry the previous quotient forward."""
+
+    def _series(self, cls, values, time_series):
+        t = cls()
+        for ts, v in zip(time_series, values):
+            t[ts] = v
+        return t
+
+    def test_float_division_by_temporal_zero_is_nan(self, time_series):
+        a = self._series(TemporalFloat, [10.0, 10.0, 10.0], time_series)
+        b = self._series(TemporalFloat, [2.0, 0.0, 5.0], time_series)
+        result = a / b
+        assert result.at(time_series[0]) == 5.0
+        assert math.isnan(result.at(time_series[1]))  # used to show 5.0
+        assert result.at(time_series[2]) == 2.0
+        assert len(result) == 3
+
+    def test_int_true_division_by_zero_is_nan(self, time_series):
+        a = self._series(TemporalInt, [10, 10], time_series)
+        b = self._series(TemporalInt, [2, 0], time_series)
+        assert math.isnan((a / b).at(time_series[1]))
+        assert all(math.isnan(v) for v in (a / 0).values())
+
+    def test_reflected_division_by_zero_is_nan(self, time_series):
+        t = self._series(TemporalFloat, [2.0, 0.0], time_series)
+        result = 10 / t
+        assert result.at(time_series[0]) == 5.0
+        assert math.isnan(result.at(time_series[1]))
+
+    @pytest.mark.parametrize("op", [operator.floordiv, operator.mod], ids=lambda o: o.__name__)
+    def test_float_floordiv_and_mod_by_zero_is_nan(self, op, time_series):
+        a = self._series(TemporalFloat, [10.0, 10.0], time_series)
+        b = self._series(TemporalFloat, [3.0, 0.0], time_series)
+        result = op(a, b)
+        assert result.at(time_series[0]) == op(10.0, 3.0)
+        assert math.isnan(result.at(time_series[1]))
+        assert all(math.isnan(v) for v in op(a, 0).values())
+        i = self._series(TemporalInt, [10, 10], time_series)
+        assert math.isnan(op(i, b).at(time_series[1]))  # promoted to float -> NaN
+
+    @pytest.mark.parametrize("op", [operator.floordiv, operator.mod], ids=lambda o: o.__name__)
+    def test_int_floordiv_and_mod_by_zero_raises(self, op, time_series):
+        a = self._series(TemporalInt, [10, 10], time_series)
+        b = self._series(TemporalInt, [3, 0], time_series)
+        with pytest.raises(ZeroDivisionError, match="to_float"):
+            op(a, b)
+        with pytest.raises(ZeroDivisionError):
+            op(a, 0)
+        with pytest.raises(ZeroDivisionError):
+            op(10, self._series(TemporalInt, [0], time_series))
+
+    def test_zero_to_negative_power_is_nan(self, time_series):
+        t = self._series(TemporalInt, [0, 2], time_series)
+        result = t**-1
+        assert isinstance(result, TemporalFloat)
+        assert math.isnan(result.at(time_series[0]))
+        assert result.at(time_series[1]) == 0.5

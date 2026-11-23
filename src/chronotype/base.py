@@ -285,6 +285,34 @@ class Temporal(Generic[T]):
         """
         return value
 
+    def _pointwise(
+        self,
+        other: object,
+        op: Callable[[Any, Any], Any],
+        reflected: bool = False,
+    ) -> list[tuple[datetime, Any]]:
+        """
+        Apply a binary ``op`` point by point and return the sorted entries.
+
+        If ``other`` is a Temporal, both operands are evaluated with ``at()`` (so
+        each uses its own interpolation) at the union of their timestamps;
+        timestamps where either operand has no value yet are skipped. Otherwise
+        ``other`` is treated as a constant and combined with every entry.
+        With ``reflected=True`` the operands are swapped: ``op(other, self)``.
+        """
+        if isinstance(other, Temporal):
+            entries: list[tuple[datetime, Any]] = []
+            for ts in sorted(set(self._keys).union(other._keys)):
+                a = self.at(ts)
+                b = other.at(ts)
+                if a is None or b is None:
+                    continue
+                entries.append((ts, op(b, a) if reflected else op(a, b)))
+            return entries
+        if reflected:
+            return [(ts, op(other, v)) for ts, v in self._timeline]
+        return [(ts, op(v, other)) for ts, v in self._timeline]
+
     def copy(self: _TemporalT) -> _TemporalT:
         """Create a shallow copy of the same type and configuration."""
         new = self._empty_like()
