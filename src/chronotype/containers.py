@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TypeVar
+from typing import Any, Callable, TypeVar
 
 from chronotype.base import Temporal
 from chronotype.exceptions import EmptyTemporalError
@@ -24,11 +24,24 @@ class TemporalList(Temporal[list[T]]):
         self,
         initial: list[T] | None = None,
         initial_time: TimestampType | None = None,
+        *,
+        serializer: Callable[[list[T]], dict[str, Any]] | None = None,
+        deserializer: Callable[[dict[str, Any]], list[T]] | None = None,
     ) -> None:
+        """
+        Args:
+            initial: Optional initial contents (copied)
+            initial_time: Timestamp for the initial contents (defaults to now)
+            serializer: Optional callable used by to_dict()/to_json() for
+                contents that are not JSON-native
+            deserializer: Inverse of ``serializer``
+        """
         super().__init__(
             list(initial) if initial is not None else None,
             initial_time,
             StepInterpolation(),
+            serializer,
+            deserializer,
         )
 
     def set(self, timestamp: TimestampType, value: list[T]) -> None:
@@ -143,11 +156,24 @@ class TemporalDict(Temporal[dict[K, V]]):
         self,
         initial: dict[K, V] | None = None,
         initial_time: TimestampType | None = None,
+        *,
+        serializer: Callable[[dict[K, V]], dict[str, Any]] | None = None,
+        deserializer: Callable[[dict[str, Any]], dict[K, V]] | None = None,
     ) -> None:
+        """
+        Args:
+            initial: Optional initial contents (copied)
+            initial_time: Timestamp for the initial contents (defaults to now)
+            serializer: Optional callable used by to_dict()/to_json() for
+                contents that are not JSON-native
+            deserializer: Inverse of ``serializer``
+        """
         super().__init__(
             dict(initial) if initial is not None else None,
             initial_time,
             StepInterpolation(),
+            serializer,
+            deserializer,
         )
 
     def set(self, timestamp: TimestampType, value: dict[K, V]) -> None:

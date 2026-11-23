@@ -306,3 +306,75 @@ class TestInterpolationParameter:
         result = (t + 1.0) * 2.0
         assert result.at(base_time + timedelta(hours=1)) == pytest.approx(22.0)
         assert not [w for w in recwarn if issubclass(w.category, DeprecationWarning)]
+
+
+class TestNumericSerializationRoundTrip:
+    """Regression (#1): every numeric subclass round-trips through JSON and dicts."""
+
+    def _populate(self, cls, values, time_series, **kwargs):
+        t = cls(**kwargs)
+        for ts, v in zip(time_series, values):
+            t[ts] = v
+        return t
+
+    @pytest.mark.parametrize(
+        "cls_name, values",
+        [
+            ("TemporalInt", [1, -2, 3]),
+            ("TemporalFloat", [1.5, -2.25, 3.0]),
+            ("TemporalBool", [True, False, True]),
+            ("TemporalString", ["a", "", "c"]),
+        ],
+    )
+    def test_round_trip(self, cls_name, values, time_series):
+        import chronotype
+
+        cls = getattr(chronotype.numeric, cls_name)
+        t = self._populate(cls, values, time_series)
+
+        from_json = cls.from_json(t.to_json())
+        from_dict = cls.from_dict(t.to_dict())
+        for restored in (from_json, from_dict):
+            assert type(restored) is cls
+            assert restored == t
+            assert restored.history() == t.history()
+
+    def test_linear_float_still_interpolates(self, base_time):
+        t = TemporalFloat(interpolation=LinearInterpolation())
+        t[base_time] = 10.0
+        t[base_time + timedelta(hours=2)] = 20.0
+        mid = base_time + timedelta(hours=1)
+
+        restored = TemporalFloat.from_json(t.to_json())
+        assert restored.at(mid) == pytest.approx(15.0)
+        assert TemporalFloat.from_dict(t.to_dict()).at(mid) == pytest.approx(15.0)
+
+    def test_deprecated_interpolate_flag_survives_round_trip(self, base_time):
+        with pytest.warns(DeprecationWarning):
+            t = TemporalFloat(interpolate=True)
+        t[base_time] = 0.0
+        t[base_time + timedelta(hours=2)] = 2.0
+        restored = TemporalFloat.from_json(t.to_json())
+        assert restored.at(base_time + timedelta(hours=1)) == pytest.approx(1.0)
+
+    def test_step_float_stays_step(self, base_time):
+        t = TemporalFloat()
+        t[base_time] = 10.0
+        t[base_time + timedelta(hours=2)] = 20.0
+        restored = TemporalFloat.from_json(t.to_json())
+        assert restored.at(base_time + timedelta(hours=1)) == 10.0
+
+    def test_int_interpolation_round_trip(self, base_time):
+        from chronotype.interpolation import NearestInterpolation
+
+        t = TemporalInt(interpolation=NearestInterpolation())
+        t[base_time] = 1
+        t[base_time + timedelta(hours=2)] = 2
+        restored = TemporalInt.from_json(t.to_json())
+        assert restored.at(base_time + timedelta(minutes=90)) == 2
+
+    def test_restored_supports_arithmetic_and_queries(self, time_series):
+        t = self._populate(TemporalInt, [10, 20, 30], time_series)
+        restored = TemporalInt.from_json(t.to_json())
+        assert (restored + 1).at(time_series[1]) == 21
+        assert restored.between(time_series[0], time_series[2]).max() == 30

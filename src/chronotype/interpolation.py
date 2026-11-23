@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Generic, Optional, TypeVar
+from typing import Any, Generic, Optional, TypeVar
 
 T = TypeVar("T")
 N = TypeVar("N", int, float)
@@ -117,3 +117,35 @@ class NearestInterpolation(InterpolationStrategy[T]):
         if before_delta <= after_delta:
             return before[1]
         return after[1]
+
+
+_BUILTIN_STRATEGIES: dict[str, type[InterpolationStrategy[Any]]] = {
+    "step": StepInterpolation,
+    "linear": LinearInterpolation,
+    "nearest": NearestInterpolation,
+}
+
+
+def strategy_to_name(strategy: InterpolationStrategy[Any]) -> str:
+    """
+    Name used to serialize an interpolation strategy.
+
+    Built-in strategies map to ``"step"``, ``"linear"`` or ``"nearest"``; any
+    other strategy is identified by its class name and must be supplied
+    explicitly when deserializing.
+    """
+    for name, cls in _BUILTIN_STRATEGIES.items():
+        if type(strategy) is cls:
+            return name
+    return type(strategy).__qualname__
+
+
+def strategy_from_name(name: str) -> InterpolationStrategy[Any]:
+    """Instantiate a built-in strategy from its serialized name."""
+    try:
+        return _BUILTIN_STRATEGIES[name]()
+    except KeyError:
+        raise ValueError(
+            f"Unknown interpolation strategy {name!r}; pass interpolation=... to "
+            "from_dict()/from_json() to restore custom strategies."
+        ) from None

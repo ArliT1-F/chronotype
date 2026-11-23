@@ -10,7 +10,12 @@ from datetime import datetime
 from typing import Any, Callable, Generic, TypeVar
 
 from chronotype.exceptions import EmptyTemporalError, InvalidTimestampError
-from chronotype.interpolation import InterpolationStrategy, StepInterpolation
+from chronotype.interpolation import (
+    InterpolationStrategy,
+    StepInterpolation,
+    strategy_from_name,
+    strategy_to_name,
+)
 from chronotype.query import TemporalQuery
 from chronotype.utils import TimestampType, normalize_timestamp, now
 
@@ -364,25 +369,66 @@ class Temporal(Generic[T]):
             )
         return self._deserializer(payload)
 
+    def _config(self) -> dict[str, Any]:
+        """
+        JSON-serializable configuration stored by :meth:`to_dict`.
+
+        Subclasses with extra settings can extend this and :meth:`_apply_config`.
+        """
+        return {"interpolation": strategy_to_name(self._interpolation)}
+
+    def _apply_config(self, config: dict[str, Any]) -> None:
+        """Restore configuration produced by :meth:`_config`."""
+        name = config.get("interpolation")
+        if name is not None:
+            self._interpolation = strategy_from_name(name)
+
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for serialization."""
+        """
+        Convert to a JSON-compatible dictionary.
+
+        The result holds the class name, the configuration (currently the
+        interpolation strategy, e.g. ``{"interpolation": "linear"}``) and the
+        entries. Values that are not JSON-native need a serializer.
+        """
         return {
             "entries": [
                 {"timestamp": ts.isoformat(), **self._serialize_value(v)}
                 for ts, v in self._timeline
             ],
             "type": self.__class__.__name__,
+            "config": self._config(),
         }
 
     @classmethod
     def from_dict(
-        cls,
+        cls: type[_TemporalT],
         data: dict[str, Any],
-        serializer: Callable[[T], dict[str, Any]] | None = None,
-        deserializer: Callable[[dict[str, Any]], T] | None = None,
-    ) -> Temporal[T]:
-        """Create from dictionary."""
-        new = cls(serializer=serializer, deserializer=deserializer)
+        serializer: Callable[[Any], dict[str, Any]] | None = None,
+        deserializer: Callable[[dict[str, Any]], Any] | None = None,
+        interpolation: InterpolationStrategy[Any] | None = None,
+    ) -> _TemporalT:
+        """
+        Create an instance of ``cls`` from :meth:`to_dict` output.
+
+        Args:
+            data: Dictionary produced by :meth:`to_dict` (payloads written by
+                0.1.1, which have no ``config``, are accepted too)
+            serializer: Serializer to attach to the new instance
+            deserializer: Deserializer used for entries with type metadata
+            interpolation: Overrides the stored interpolation strategy. Required
+                to restore custom (non built-in) strategies.
+        """
+        new = cls()
+        if serializer is not None:
+            new._serializer = serializer
+        if deserializer is not None:
+            new._deserializer = deserializer
+        if interpolation is not None:
+            new._interpolation = interpolation
+        else:
+            new._apply_config(data.get("config") or {})
+
         for entry in data.get("entries", []):
             if isinstance(entry, (list, tuple)) and len(entry) == 2:
                 ts_str, value = entry
@@ -398,18 +444,24 @@ class Temporal(Generic[T]):
         return new
 
     def to_json(self) -> str:
-        """Serialize to JSON string."""
+        """Serialize to JSON string (see :meth:`to_dict`)."""
         return json.dumps(self.to_dict())
 
     @classmethod
     def from_json(
-        cls,
+        cls: type[_TemporalT],
         json_str: str,
-        serializer: Callable[[T], dict[str, Any]] | None = None,
-        deserializer: Callable[[dict[str, Any]], T] | None = None,
-    ) -> Temporal[T]:
-        """Deserialize from JSON string."""
-        return cls.from_dict(json.loads(json_str), serializer=serializer, deserializer=deserializer)
+        serializer: Callable[[Any], dict[str, Any]] | None = None,
+        deserializer: Callable[[dict[str, Any]], Any] | None = None,
+        interpolation: InterpolationStrategy[Any] | None = None,
+    ) -> _TemporalT:
+        """Deserialize from JSON string (see :meth:`from_dict`)."""
+        return cls.from_dict(
+            json.loads(json_str),
+            serializer=serializer,
+            deserializer=deserializer,
+            interpolation=interpolation,
+        )
 
     def __getstate__(self) -> dict[str, Any]:
         """Support for pickle serialization."""

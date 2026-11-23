@@ -216,3 +216,40 @@ class TestDerivedContainers:
         for derived in (sliced, merged, t.deepcopy()):
             assert isinstance(derived, TemporalDict)
             assert derived.key_history("a") == [(base_time, 1)]
+
+
+class TestContainerSerializationRoundTrip:
+    """Regression (#1): container subclasses round-trip through JSON and dicts."""
+
+    def test_list_round_trip(self, base_time):
+        t = TemporalList(initial=[1, 2], initial_time=base_time)
+        t.append(3, base_time + timedelta(days=1))
+        for restored in (TemporalList.from_json(t.to_json()), TemporalList.from_dict(t.to_dict())):
+            assert type(restored) is TemporalList
+            assert restored.history() == t.history()
+            restored.append(4)
+            assert t.current() == [1, 2, 3]
+
+    def test_dict_round_trip(self, base_time):
+        t = TemporalDict(initial={"a": 1}, initial_time=base_time)
+        t.set_item("b", [1, 2], base_time + timedelta(days=1))
+        for restored in (TemporalDict.from_json(t.to_json()), TemporalDict.from_dict(t.to_dict())):
+            assert type(restored) is TemporalDict
+            assert restored.history() == t.history()
+            assert restored.key_history("b") == [(base_time + timedelta(days=1), [1, 2])]
+
+    def test_list_with_custom_serializer(self, base_time):
+        from datetime import date
+
+        def ser(value):
+            return {"type": "dates", "value": [d.isoformat() for d in value]}
+
+        def de(payload):
+            return [date.fromisoformat(d) for d in payload["value"]]
+
+        t = TemporalList(
+            initial=[date(2024, 1, 1)], initial_time=base_time, serializer=ser, deserializer=de
+        )
+        restored = TemporalList.from_json(t.to_json(), serializer=ser, deserializer=de)
+        assert restored.current() == [date(2024, 1, 1)]
+        assert restored.to_json() == t.to_json()

@@ -457,3 +457,53 @@ class TestDerivedTemporalsKeepTypeAndConfig:
             derived[time_series[5]] = 5
             assert len(t) == 1
             assert t.at(time_series[6]) == 0
+
+
+class TestSerializationConfig:
+    """Regression (#1): to_dict stores configuration that from_dict restores."""
+
+    def test_interpolation_is_stored_and_restored(self, base_time):
+        from chronotype import LinearInterpolation
+
+        t = Temporal[float](interpolation=LinearInterpolation())
+        t[base_time] = 0.0
+        t[base_time + timedelta(hours=2)] = 2.0
+        data = t.to_dict()
+        assert data["config"] == {"interpolation": "linear"}
+        restored = Temporal[float].from_dict(data)
+        assert restored.at(base_time + timedelta(hours=1)) == pytest.approx(1.0)
+
+    def test_payload_without_config_uses_class_default(self, base_time):
+        legacy = {
+            "entries": [{"timestamp": base_time.isoformat(), "type": None, "value": 1}],
+            "type": "Temporal",
+        }
+        restored = Temporal[int].from_dict(legacy)
+        assert restored.at(base_time + timedelta(days=1)) == 1
+
+    def test_custom_strategy_requires_explicit_interpolation(self, base_time):
+        from chronotype import InterpolationStrategy
+
+        class Always42(InterpolationStrategy[int]):
+            def interpolate(self, target, before, after):
+                return 42
+
+        t = Temporal[int](interpolation=Always42())
+        t[base_time] = 1
+        json_str = t.to_json()
+        with pytest.raises(ValueError, match="Always42"):
+            Temporal[int].from_json(json_str)
+        restored = Temporal[int].from_json(json_str, interpolation=Always42())
+        assert restored.at(base_time) == 42
+
+    def test_entries_are_sorted_on_load(self, base_time):
+        later = (base_time + timedelta(days=1)).isoformat()
+        data = {
+            "entries": [
+                {"timestamp": later, "type": None, "value": 2},
+                {"timestamp": base_time.isoformat(), "type": None, "value": 1},
+            ]
+        }
+        restored = Temporal[int].from_dict(data)
+        assert restored.values() == [1, 2]
+        assert restored.at(base_time + timedelta(hours=1)) == 1
