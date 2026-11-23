@@ -2,6 +2,8 @@
 
 from datetime import timedelta
 
+import pytest
+
 from chronotype import TemporalDict, TemporalList
 
 
@@ -253,3 +255,183 @@ class TestContainerSerializationRoundTrip:
         restored = TemporalList.from_json(t.to_json(), serializer=ser, deserializer=de)
         assert restored.current() == [date(2024, 1, 1)]
         assert restored.to_json() == t.to_json()
+
+
+def _days(base_time, *offsets):
+    return [base_time + timedelta(days=o) for o in offsets]
+
+
+class TestBackfilledListMutations:
+    """Regression (#4): past-dated list mutations build on at(ts) and rebase later snapshots."""
+
+    def test_append_example_from_issue(self, base_time):
+        d1, d2, d3 = _days(base_time, 1, 2, 3)
+        t = TemporalList()
+        t.append("a", d1)
+        t.append("c", d3)
+        t.append("b", d2)
+        assert t.history() == [(d1, ["a"]), (d2, ["a", "b"]), (d3, ["a", "c", "b"])]
+        assert t.current() == ["a", "c", "b"]
+
+    def test_extend_and_insert(self, base_time):
+        d1, d2, d3 = _days(base_time, 1, 2, 3)
+        t = TemporalList(initial=[1, 3], initial_time=d1)
+        t.append(4, d3)
+        t.insert(1, 2, d2)
+        assert t.at(d2) == [1, 2, 3]
+        assert t.at(d3) == [1, 2, 3, 4]
+        t.extend([9], d2)
+        assert t.at(d2) == [1, 2, 3, 9]
+        assert t.at(d3) == [1, 2, 3, 4, 9]
+
+    def test_remove_propagates(self, base_time):
+        d1, d2, d3 = _days(base_time, 1, 2, 3)
+        t = TemporalList(initial=["a", "b"], initial_time=d1)
+        t.append("c", d3)
+        t.remove("b", d2)
+        assert t.at(d1) == ["a", "b"]
+        assert t.at(d2) == ["a"]
+        assert t.at(d3) == ["a", "c"]
+
+    def test_remove_stops_where_a_later_entry_already_removed_it(self, base_time):
+        d1, d2, d3, d4 = _days(base_time, 1, 2, 3, 4)
+        t = TemporalList(initial=["a"], initial_time=d1)
+        t.remove("a", d3)
+        t.append("a", d4)  # re-added later: must survive the backfilled removal
+        t.remove("a", d2)
+        assert [v for _, v in t.history()] == [["a"], [], [], ["a"]]
+
+    def test_remove_checks_snapshot_at_timestamp(self, base_time):
+        d1, d2, d3 = _days(base_time, 1, 2, 3)
+        t = TemporalList(initial=["a"], initial_time=d1)
+        t.append("b", d3)
+        before = t.history()
+        with pytest.raises(ValueError):
+            t.remove("b", d2)  # "b" only exists from d3 on
+        assert t.history() == before
+
+    def test_pop_backfill_removes_the_popped_element_later(self, base_time):
+        d1, d2, d3 = _days(base_time, 1, 2, 3)
+        t = TemporalList(initial=["x"], initial_time=d1)
+        t.append("y", d3)
+        assert t.pop(timestamp=d2) == "x"
+        assert t.at(d2) == []
+        assert t.at(d3) == ["y"]
+
+    def test_pop_by_index_keeps_position(self, base_time):
+        d1, d2, d3 = _days(base_time, 1, 2, 3)
+        t = TemporalList(initial=["x", "a", "x"], initial_time=d1)
+        t.append("b", d3)
+        assert t.pop(-1, timestamp=d2) == "x"
+        assert t.at(d3) == ["x", "a", "b"]
+
+    def test_pop_errors(self, base_time):
+        d0, d1 = _days(base_time, 0, 1)
+        t = TemporalList(initial=["x"], initial_time=d1)
+        with pytest.raises(IndexError):
+            t.pop(timestamp=d0)  # nothing in effect yet
+        with pytest.raises(IndexError):
+            t.pop(5, timestamp=d1)
+        assert len(t) == 1
+
+    def test_clear_list_removes_only_elements_present_at_timestamp(self, base_time):
+        d1, d2, d3 = _days(base_time, 1, 2, 3)
+        t = TemporalList(initial=["a", "b"], initial_time=d1)
+        t.append("c", d3)
+        t.clear_list(d2)
+        assert t.at(d2) == []
+        assert t.at(d3) == ["c"]
+
+    def test_mutation_before_first_entry_starts_from_empty(self, base_time):
+        d0, d1 = _days(base_time, 0, 1)
+        t = TemporalList(initial=["a"], initial_time=d1)
+        t.append("z", d0)
+        assert t.at(d0) == ["z"]
+        assert t.at(d1) == ["a", "z"]
+
+    def test_default_timestamp_builds_on_value_now_not_latest(self, base_time):
+        from chronotype.utils import now
+
+        future = now() + timedelta(days=30)
+        t = TemporalList(initial=["x"], initial_time=base_time)
+        t.append("y", future)
+        t.append("z")  # now: builds on ["x"], and is rebased onto the future entry
+        assert t.at(now()) == ["x", "z"]
+        assert t.at(future) == ["x", "y", "z"]
+
+    def test_set_does_not_touch_other_snapshots(self, base_time):
+        d1, d2, d3 = _days(base_time, 1, 2, 3)
+        t = TemporalList(initial=["a"], initial_time=d1)
+        t.append("c", d3)
+        t[d2] = ["q"]
+        assert t.at(d3) == ["a", "c"]
+
+
+class TestBackfilledDictMutations:
+    """Regression (#4): past-dated dict mutations build on at(ts) and rebase later snapshots."""
+
+    def test_set_item_propagates(self, base_time):
+        d1, d2, d3 = _days(base_time, 1, 2, 3)
+        t = TemporalDict(initial={"a": 1}, initial_time=d1)
+        t.set_item("b", 2, d3)
+        t.set_item("c", 3, d2)
+        assert t.at(d2) == {"a": 1, "c": 3}  # used to include "b"
+        assert t.at(d3) == {"a": 1, "b": 2, "c": 3}
+
+    def test_later_change_to_same_key_wins(self, base_time):
+        d1, d2, d3, d4 = _days(base_time, 1, 2, 3, 4)
+        t = TemporalDict(initial={"a": 1}, initial_time=d1)
+        t.set_item("a", 3, d3)
+        t.set_item("a", 1, d4)
+        t.set_item("a", 2, d2)
+        assert [v["a"] for _, v in t.history()] == [1, 2, 3, 1]
+
+    def test_delete_item_propagates_and_validates(self, base_time):
+        d1, d2, d3 = _days(base_time, 1, 2, 3)
+        t = TemporalDict(initial={"a": 1, "b": 2}, initial_time=d1)
+        t.set_item("c", 3, d3)
+        t.delete_item("a", d2)
+        assert t.at(d2) == {"b": 2}
+        assert t.at(d3) == {"b": 2, "c": 3}
+        with pytest.raises(KeyError):
+            t.delete_item("c", d2)  # "c" only exists from d3 on
+
+    def test_update_dict_is_per_key(self, base_time):
+        d1, d2, d3 = _days(base_time, 1, 2, 3)
+        t = TemporalDict(initial={"a": 1}, initial_time=d1)
+        t.set_item("a", 5, d3)
+        t.update_dict({"a": 2, "b": 2}, d2)
+        assert t.at(d2) == {"a": 2, "b": 2}
+        assert t.at(d3) == {"a": 5, "b": 2}
+
+    def test_pop_item_propagates(self, base_time):
+        d1, d2, d3 = _days(base_time, 1, 2, 3)
+        t = TemporalDict(initial={"a": 1, "b": 2}, initial_time=d1)
+        t.set_item("c", 3, d3)
+        assert t.pop_item("a", d2) == 1
+        assert t.at(d3) == {"b": 2, "c": 3}
+        assert t.pop_item("zzz", d2, default=0) == 0
+
+    def test_pop_item_before_first_entry_returns_default(self, base_time):
+        d0, d1 = _days(base_time, 0, 1)
+        t = TemporalDict(initial={"a": 1}, initial_time=d1)
+        assert t.pop_item("a", d0, default="none") == "none"
+        assert len(t) == 1
+
+    def test_clear_dict_keeps_later_changes(self, base_time):
+        d1, d2, d3 = _days(base_time, 1, 2, 3)
+        t = TemporalDict(initial={"a": 1, "b": 2}, initial_time=d1)
+        t.update_dict({"b": 9, "c": 3}, d3)
+        t.clear_dict(d2)
+        assert t.at(d2) == {}
+        assert t.at(d3) == {"b": 9, "c": 3}
+
+    def test_default_timestamp_builds_on_value_now_not_latest(self, base_time):
+        from chronotype.utils import now
+
+        future = now() + timedelta(days=30)
+        t = TemporalDict(initial={"a": 1}, initial_time=base_time)
+        t.set_item("f", 1, future)
+        t.set_item("n", 1)
+        assert t.at(now()) == {"a": 1, "n": 1}
+        assert t.at(future) == {"a": 1, "f": 1, "n": 1}

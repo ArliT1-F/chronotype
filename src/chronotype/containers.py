@@ -1,4 +1,31 @@
-"""Temporal container types."""
+"""
+Temporal container types.
+
+Mutation methods (``append``, ``remove``, ``set_item``, ...) record a new
+snapshot at ``timestamp`` (default: now). The new snapshot is computed from
+the snapshot *in effect at that timestamp* (``at(timestamp)``, or an empty
+container if there is none), not from the latest snapshot.
+
+**Backfilling.** When snapshots exist *after* ``timestamp``, the change is
+also applied to them, so history stays consistent with the change having
+happened at ``timestamp``:
+
+* Additions (``append``, ``extend``, ``insert``, ``TemporalSet.add``...) are
+  applied to every later snapshot (``insert`` uses the same index).
+* Removals (``remove``, ``pop``, ``clear_list``, ``discard``...) remove the
+  same element(s) from later snapshots. Propagation of an element stops at the
+  first later snapshot that no longer contains it: a later entry already
+  removed it, and everything after derives from that entry.
+* Dict changes (``set_item``, ``update_dict``, ``delete_item``, ``pop_item``,
+  ``clear_dict``) propagate key by key while the later snapshot still has the
+  key's previous state (same value, or still absent). The first later snapshot
+  with a different state for that key wins, and propagation of that key stops.
+
+Validation happens against the snapshot at ``timestamp``: e.g. ``remove(x, ts)``
+raises ``ValueError`` if ``x`` is not in the list at ``ts`` even if it is in a
+later snapshot. ``set()`` / ``t[ts] = ...`` record a full snapshot and never
+modify other entries.
+"""
 
 from __future__ import annotations
 
@@ -13,11 +40,41 @@ from chronotype.utils import TimestampType, normalize_timestamp, now
 K = TypeVar("K")
 V = TypeVar("V")
 T = TypeVar("T")
+C = TypeVar("C")
+
+_MISSING: Any = object()
 
 
-class TemporalList(Temporal[list[T]]):
+class _TemporalContainer(Temporal[C]):
+    """Shared helpers for container temporals (see module docs for backfill rules)."""
+
+    @staticmethod
+    def _mutation_time(timestamp: TimestampType | None) -> datetime:
+        return normalize_timestamp(timestamp) if timestamp is not None else now()
+
+    def _rebase_later(self, ts: datetime, transform: Callable[[C], bool]) -> None:
+        """
+        Apply ``transform`` to a copy of every snapshot strictly after ``ts``.
+
+        ``transform`` mutates the copy in place and returns whether propagation
+        should continue to the next snapshot.
+        """
+        for i in range(self._find_index(ts), len(self._timeline)):
+            entry_ts, snapshot = self._timeline[i]
+            updated = self._copy_value(snapshot)
+            keep_going = transform(updated)
+            self._timeline[i] = (entry_ts, updated)
+            if not keep_going:
+                break
+
+
+class TemporalList(_TemporalContainer[list[T]]):
     """
     Temporal list that tracks history of list changes.
+
+    Snapshots are stored as copies and returned as copies. Mutations with a
+    past timestamp are applied to later snapshots too; see the module
+    documentation of :mod:`chronotype.containers` for the exact rules.
     """
 
     def __init__(
@@ -57,68 +114,120 @@ class TemporalList(Temporal[list[T]]):
         """Get the most recent list value, returning a copy."""
         return list(super().current())
 
-    def append(self, value: T, timestamp: TimestampType | None = None) -> None:
-        """Append value to list, creating new historical entry."""
-        ts = normalize_timestamp(timestamp) if timestamp else now()
+    def _snapshot(self, ts: datetime) -> list[T]:
+        snapshot = self.at(ts)
+        return snapshot if snapshot is not None else []
 
-        if not self._timeline:
-            self.set(ts, [value])
-        else:
-            current = list(self.current())
-            current.append(value)
-            self.set(ts, current)
+    def append(self, value: T, timestamp: TimestampType | None = None) -> None:
+        """Append value to the list in effect at ``timestamp`` (and to later snapshots)."""
+        ts = self._mutation_time(timestamp)
+        snapshot = self._snapshot(ts)
+        snapshot.append(value)
+        self.set(ts, snapshot)
+
+        def later(lst: list[T]) -> bool:
+            lst.append(value)
+            return True
+
+        self._rebase_later(ts, later)
 
     def extend(self, values: list[T], timestamp: TimestampType | None = None) -> None:
-        """Extend list with values, creating new historical entry."""
-        ts = normalize_timestamp(timestamp) if timestamp else now()
+        """Extend the list in effect at ``timestamp`` (and later snapshots) with values."""
+        ts = self._mutation_time(timestamp)
+        added = list(values)
+        snapshot = self._snapshot(ts)
+        snapshot.extend(added)
+        self.set(ts, snapshot)
 
-        if not self._timeline:
-            self.set(ts, list(values))
-        else:
-            current = list(self.current())
-            current.extend(values)
-            self.set(ts, current)
+        def later(lst: list[T]) -> bool:
+            lst.extend(added)
+            return True
+
+        self._rebase_later(ts, later)
 
     def insert(self, index: int, value: T, timestamp: TimestampType | None = None) -> None:
-        """Insert value at index, creating new historical entry."""
-        ts = normalize_timestamp(timestamp) if timestamp else now()
+        """Insert value at index in the list at ``timestamp`` (and in later snapshots)."""
+        ts = self._mutation_time(timestamp)
+        snapshot = self._snapshot(ts)
+        snapshot.insert(index, value)
+        self.set(ts, snapshot)
 
-        if not self._timeline:
-            self.set(ts, [value])
-        else:
-            current = list(self.current())
-            current.insert(index, value)
-            self.set(ts, current)
+        def later(lst: list[T]) -> bool:
+            lst.insert(index, value)
+            return True
+
+        self._rebase_later(ts, later)
 
     def remove(self, value: T, timestamp: TimestampType | None = None) -> None:
-        """Remove value from list, creating new historical entry."""
-        ts = normalize_timestamp(timestamp) if timestamp else now()
+        """
+        Remove the first occurrence of value from the list at ``timestamp``.
 
-        if not self._timeline:
-            raise ValueError(f"{value} not in list")
+        Raises ValueError if it is not in the list at ``timestamp``. Later
+        snapshots lose the same value while they still contain it.
+        """
+        ts = self._mutation_time(timestamp)
+        snapshot = self._snapshot(ts)
+        snapshot.remove(value)
+        self.set(ts, snapshot)
 
-        current = list(self.current())
-        current.remove(value)
-        self.set(ts, current)
+        def later(lst: list[T]) -> bool:
+            if value not in lst:
+                return False
+            lst.remove(value)
+            return True
 
-    def pop(
-        self, index: int = -1, timestamp: TimestampType | None = None
-    ) -> T:
-        """Pop value from list, creating new historical entry."""
-        ts = normalize_timestamp(timestamp) if timestamp else now()
+        self._rebase_later(ts, later)
 
-        if not self._timeline:
-            raise IndexError("pop from empty list")
+    def pop(self, index: int = -1, timestamp: TimestampType | None = None) -> T:
+        """
+        Remove and return the item at index in the list at ``timestamp``.
 
-        current = list(self.current())
-        value = current.pop(index)
-        self.set(ts, current)
+        Raises IndexError if the list at ``timestamp`` is empty or the index is
+        out of range. Later snapshots lose the same element (at the same position
+        if it is still there, otherwise its first occurrence) while they still
+        contain it.
+        """
+        ts = self._mutation_time(timestamp)
+        snapshot = self._snapshot(ts)
+        position = index if index >= 0 else len(snapshot) + index
+        value = snapshot.pop(index)
+        self.set(ts, snapshot)
+
+        def later(lst: list[T]) -> bool:
+            if position < len(lst) and lst[position] == value:
+                del lst[position]
+            elif value in lst:
+                lst.remove(value)
+            else:
+                return False
+            return True
+
+        self._rebase_later(ts, later)
         return value
 
     def clear_list(self, timestamp: TimestampType | None = None) -> None:
-        """Clear the list contents (not the history)."""
-        ts = normalize_timestamp(timestamp) if timestamp else now()
+        """
+        Empty the list at ``timestamp`` (the history is kept).
+
+        Later snapshots lose the elements that were in the list at ``timestamp``;
+        elements added after ``timestamp`` are kept.
+        """
+        ts = self._mutation_time(timestamp)
+        pending = self._snapshot(ts)
         self.set(ts, [])
+
+        def later(lst: list[T]) -> bool:
+            nonlocal pending
+            still_present = []
+            for item in pending:
+                if item in lst:
+                    lst.remove(item)
+                    still_present.append(item)
+            pending = still_present
+            return bool(pending)
+
+        if pending:
+            self._rebase_later(ts, later)
 
     def current_len(self) -> int:
         """Get length of current list."""
@@ -147,9 +256,13 @@ class TemporalList(Temporal[list[T]]):
         return list(value)
 
 
-class TemporalDict(Temporal[dict[K, V]]):
+class TemporalDict(_TemporalContainer[dict[K, V]]):
     """
     Temporal dictionary that tracks history of dict changes.
+
+    Snapshots are stored as copies and returned as copies. Mutations with a
+    past timestamp are applied to later snapshots key by key; see the module
+    documentation of :mod:`chronotype.containers` for the exact rules.
     """
 
     def __init__(
@@ -189,61 +302,94 @@ class TemporalDict(Temporal[dict[K, V]]):
         """Get the most recent dict value, returning a copy."""
         return dict(super().current())
 
-    def set_item(
-        self, key: K, value: V, timestamp: TimestampType | None = None
-    ) -> None:
-        """Set key-value pair, creating new historical entry."""
-        ts = normalize_timestamp(timestamp) if timestamp else now()
+    def _snapshot(self, ts: datetime) -> dict[K, V]:
+        snapshot = self.at(ts)
+        return snapshot if snapshot is not None else {}
 
-        if not self._timeline:
-            self.set(ts, {key: value})
-        else:
-            current = dict(self.current())
-            current[key] = value
-            self.set(ts, current)
+    def _apply_changes(
+        self, ts: datetime, snapshot: dict[K, V], changes: dict[K, tuple[Any, Any]]
+    ) -> None:
+        """
+        Record ``snapshot`` at ``ts`` and propagate per-key ``(old, new)`` changes.
+
+        ``_MISSING`` as old/new means "key absent". A key keeps propagating while
+        a later snapshot still has its ``old`` state.
+        """
+        self.set(ts, snapshot)
+        active = dict(changes)
+
+        def same(current: Any, expected: Any) -> bool:
+            if current is _MISSING or expected is _MISSING:
+                return current is expected
+            return bool(current == expected)
+
+        def later(dct: dict[K, V]) -> bool:
+            for key, (old, new) in list(active.items()):
+                if not same(dct.get(key, _MISSING), old):
+                    del active[key]  # changed later: the later entry wins
+                elif new is _MISSING:
+                    dct.pop(key, None)
+                else:
+                    dct[key] = new
+            return bool(active)
+
+        if active:
+            self._rebase_later(ts, later)
+
+    def set_item(self, key: K, value: V, timestamp: TimestampType | None = None) -> None:
+        """Set ``key`` to ``value`` in the dict at ``timestamp`` (and in later snapshots)."""
+        ts = self._mutation_time(timestamp)
+        snapshot = self._snapshot(ts)
+        old = snapshot.get(key, _MISSING)
+        snapshot[key] = value
+        self._apply_changes(ts, snapshot, {key: (old, value)})
 
     def delete_item(self, key: K, timestamp: TimestampType | None = None) -> None:
-        """Delete key, creating new historical entry."""
-        ts = normalize_timestamp(timestamp) if timestamp else now()
+        """Delete ``key`` from the dict at ``timestamp``; KeyError if it is absent there."""
+        ts = self._mutation_time(timestamp)
+        snapshot = self._snapshot(ts)
+        old = snapshot.pop(key)
+        self._apply_changes(ts, snapshot, {key: (old, _MISSING)})
 
-        if not self._timeline:
-            raise KeyError(key)
-
-        current = dict(self.current())
-        del current[key]
-        self.set(ts, current)
-
-    def update_dict(
-        self, other: dict[K, V], timestamp: TimestampType | None = None
-    ) -> None:
-        """Update dict with another dict, creating new historical entry."""
-        ts = normalize_timestamp(timestamp) if timestamp else now()
-
-        if not self._timeline:
-            self.set(ts, dict(other))
-        else:
-            current = dict(self.current())
-            current.update(other)
-            self.set(ts, current)
+    def update_dict(self, other: dict[K, V], timestamp: TimestampType | None = None) -> None:
+        """Update the dict at ``timestamp`` with ``other`` (propagated per key)."""
+        ts = self._mutation_time(timestamp)
+        snapshot = self._snapshot(ts)
+        changes = {key: (snapshot.get(key, _MISSING), value) for key, value in other.items()}
+        snapshot.update(other)
+        self._apply_changes(ts, snapshot, changes)
 
     def pop_item(
         self, key: K, timestamp: TimestampType | None = None, default: V | None = None
     ) -> V | None:
-        """Pop key from dict, creating new historical entry."""
-        ts = normalize_timestamp(timestamp) if timestamp else now()
+        """
+        Remove ``key`` from the dict at ``timestamp`` and return its value.
 
-        if not self._timeline:
+        Returns ``default`` if the key is absent there (no entry is recorded when
+        no dict is in effect at ``timestamp``).
+        """
+        ts = self._mutation_time(timestamp)
+        snapshot = self.at(ts)
+        if snapshot is None:
             return default
-
-        current = dict(self.current())
-        value = current.pop(key, default)
-        self.set(ts, current)
+        if key not in snapshot:
+            self.set(ts, snapshot)
+            return default
+        value = snapshot.pop(key)
+        self._apply_changes(ts, snapshot, {key: (value, _MISSING)})
         return value
 
     def clear_dict(self, timestamp: TimestampType | None = None) -> None:
-        """Clear the dict contents (not the history)."""
-        ts = normalize_timestamp(timestamp) if timestamp else now()
-        self.set(ts, {})
+        """
+        Empty the dict at ``timestamp`` (the history is kept).
+
+        Later snapshots lose the keys present at ``timestamp`` unless a later
+        entry changed them.
+        """
+        ts = self._mutation_time(timestamp)
+        snapshot = self._snapshot(ts)
+        changes = {key: (value, _MISSING) for key, value in snapshot.items()}
+        self._apply_changes(ts, {}, changes)
 
     def get_item_at(self, timestamp: TimestampType, key: K) -> V | None:
         """Get value for key from dict at timestamp."""
