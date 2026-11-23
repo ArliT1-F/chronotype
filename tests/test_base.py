@@ -273,3 +273,134 @@ class TestTemporalQuery:
         query = t.between(time_series[0], time_series[9])
         assert query.first_value() == 10
         assert query.last_value() == 50
+
+
+class TestIndexConsistency:
+    """Regression guards for the cached timestamp index (#13)."""
+
+    def test_out_of_order_sets(self, base_time):
+        t = Temporal[int]()
+        for offset in [5, 1, 3, 2, 4, 0]:
+            t[base_time + timedelta(days=offset)] = offset
+        assert t.timestamps() == [base_time + timedelta(days=i) for i in range(6)]
+        assert t.at(base_time + timedelta(days=2, hours=1)) == 2
+
+    def test_overwrite_same_timestamp(self, base_time):
+        t = Temporal[int]()
+        t[base_time] = 1
+        t[base_time] = 2
+        assert len(t) == 1
+        assert t.at(base_time) == 2
+
+    def test_rollback_then_set(self, time_series):
+        t = Temporal[int]()
+        for i, ts in enumerate(time_series):
+            t[ts] = i
+        t.rollback(to=time_series[3])
+        assert t.at(time_series[8]) == 3
+        t.rollback(steps=2)
+        assert t.at(time_series[8]) == 1
+        t[time_series[5]] = 50
+        assert t.at(time_series[4]) == 1
+        assert t.at(time_series[6]) == 50
+        t.rollback(steps=100)
+        assert len(t) == 0
+        assert t.at(time_series[6]) is None
+
+    def test_clear_then_set(self, time_series):
+        t = Temporal[int]()
+        t[time_series[3]] = 3
+        t.clear()
+        assert t.at(time_series[5]) is None
+        t[time_series[1]] = 1
+        assert t.at(time_series[5]) == 1
+
+    def test_merge_result_is_searchable(self, time_series):
+        a = Temporal[int]()
+        a[time_series[0]] = 0
+        a[time_series[4]] = 4
+        b = Temporal[int]()
+        b[time_series[2]] = 2
+        merged = a.merge(b)
+        assert merged.at(time_series[3]) == 2
+        assert time_series[2] in merged
+        assert merged.between(time_series[1], time_series[3]).values() == [2]
+
+    def test_pickle_round_trip_is_searchable(self, time_series):
+        import pickle
+
+        t = Temporal[int]()
+        for i, ts in enumerate(time_series[:5]):
+            t[ts] = i
+        restored = pickle.loads(pickle.dumps(t))
+        assert restored.at(time_series[2]) == 2
+        restored[time_series[7]] = 7
+        assert restored.at(time_series[8]) == 7
+        assert restored.between(time_series[1], time_series[3]).values() == [1, 2, 3]
+        assert restored.to_json()  # serializer attributes restored after unpickling
+
+    def test_between_boundaries(self, time_series):
+        t = Temporal[int]()
+        for i, ts in enumerate(time_series):
+            t[ts] = i
+        s, e = time_series[2], time_series[5]
+        assert t.between(s, e).values() == [2, 3, 4, 5]
+        assert t.between(s, e, include_start=False).values() == [3, 4, 5]
+        assert t.between(s, e, include_end=False).values() == [2, 3, 4]
+        assert t.between(s, e, include_start=False, include_end=False).values() == [3, 4]
+        mid = time_series[2] + timedelta(hours=12)
+        assert t.between(mid, mid).values() == []
+        assert t.between(s, s).values() == [2]
+        assert t.between(s, s, include_start=False).values() == []
+
+
+class TestPerformance:
+    """Benchmarks (#13): lookups must be O(log n), not O(n)."""
+
+    N = 100_000
+
+    def _big(self, base_time):
+        data = {
+            "entries": [
+                {"timestamp": (base_time + timedelta(seconds=i)).isoformat(), "value": i}
+                for i in range(self.N)
+            ]
+        }
+        return Temporal[int].from_dict(data)
+
+    def test_at_lookups_on_100k_entries_are_fast(self, base_time):
+        import time
+
+        t = self._big(base_time)
+        assert len(t) == self.N
+        probes = [base_time + timedelta(seconds=(i * 7919) % self.N, milliseconds=500)
+                  for i in range(2_000)]
+        start = time.perf_counter()
+        for probe in probes:
+            t.at(probe)
+        elapsed = time.perf_counter() - start
+        assert t.at(base_time + timedelta(seconds=12_345, milliseconds=1)) == 12_345
+        assert elapsed < 0.5, f"2000 at() lookups took {elapsed:.3f}s"
+
+    def test_between_on_100k_entries_is_fast(self, base_time):
+        import time
+
+        t = self._big(base_time)
+        start = time.perf_counter()
+        for i in range(200):
+            lo = base_time + timedelta(seconds=i * 397)
+            q = t.between(lo, lo + timedelta(seconds=9))
+            assert len(q) == 10
+        elapsed = time.perf_counter() - start
+        assert elapsed < 0.5, f"200 between() calls took {elapsed:.3f}s"
+
+    def test_appending_in_order_is_fast(self, base_time):
+        import time
+
+        t = Temporal[int]()
+        start = time.perf_counter()
+        for i in range(20_000):
+            t[base_time + timedelta(seconds=i)] = i
+        elapsed = time.perf_counter() - start
+        assert len(t) == 20_000
+        assert elapsed < 2.0, f"20k in-order sets took {elapsed:.3f}s"

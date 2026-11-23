@@ -51,24 +51,12 @@ class TemporalFloat(Temporal[float]):
         if start_dt > end_dt:
             raise InvalidTimestampError("Start must be before or equal to end")
 
-        entries = []
-        value_before: float | None = None
-
-        for ts, value in self._timeline:
-            if ts < start_dt:
-                value_before = value
-            if include_start and include_end:
-                if start_dt <= ts <= end_dt:
-                    entries.append((ts, value))
-            elif include_start:
-                if start_dt <= ts < end_dt:
-                    entries.append((ts, value))
-            elif include_end:
-                if start_dt < ts <= end_dt:
-                    entries.append((ts, value))
-            else:
-                if start_dt < ts < end_dt:
-                    entries.append((ts, value))
+        lo, hi = self._range_bounds(start_dt, end_dt, include_start, include_end)
+        entries = self._timeline[lo:hi]
+        before_idx = self._find_index_left(start_dt) - 1
+        value_before: float | None = (
+            self._timeline[before_idx][1] if before_idx >= 0 else None
+        )
 
         return NumericTemporalQuery(
             entries, start_dt, end_dt, include_start, include_end, value_before
@@ -220,7 +208,7 @@ class TemporalFloat(Temporal[float]):
     def copy(self) -> TemporalFloat:
         """Create a copy."""
         new = TemporalFloat(interpolate=self._interpolate)
-        new._timeline = list(self._timeline)
+        new._set_timeline(list(self._timeline))
         return new
 
 
@@ -250,24 +238,12 @@ class TemporalInt(Temporal[int]):
         if start_dt > end_dt:
             raise InvalidTimestampError("Start must be before or equal to end")
 
-        entries = []
-        value_before: int | None = None
-
-        for ts, value in self._timeline:
-            if ts < start_dt:
-                value_before = value
-            if include_start and include_end:
-                if start_dt <= ts <= end_dt:
-                    entries.append((ts, value))
-            elif include_start:
-                if start_dt <= ts < end_dt:
-                    entries.append((ts, value))
-            elif include_end:
-                if start_dt < ts <= end_dt:
-                    entries.append((ts, value))
-            else:
-                if start_dt < ts < end_dt:
-                    entries.append((ts, value))
+        lo, hi = self._range_bounds(start_dt, end_dt, include_start, include_end)
+        entries = self._timeline[lo:hi]
+        before_idx = self._find_index_left(start_dt) - 1
+        value_before: int | None = (
+            self._timeline[before_idx][1] if before_idx >= 0 else None
+        )
 
         return NumericTemporalQuery(
             entries, start_dt, end_dt, include_start, include_end, value_before
@@ -447,7 +423,7 @@ class TemporalInt(Temporal[int]):
     def copy(self) -> TemporalInt:
         """Create a copy."""
         new = TemporalInt()
-        new._timeline = list(self._timeline)
+        new._set_timeline(list(self._timeline))
         return new
 
 
@@ -577,7 +553,7 @@ class TemporalBool(Temporal[bool]):
     def copy(self) -> TemporalBool:
         """Create a copy."""
         new = TemporalBool()
-        new._timeline = list(self._timeline)
+        new._set_timeline(list(self._timeline))
         return new
 
 
@@ -646,5 +622,5 @@ class TemporalString(Temporal[str]):
     def copy(self) -> TemporalString:
         """Create a copy."""
         new = TemporalString()
-        new._timeline = list(self._timeline)
+        new._set_timeline(list(self._timeline))
         return new
