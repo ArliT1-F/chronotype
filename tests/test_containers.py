@@ -4,7 +4,7 @@ from datetime import timedelta
 
 import pytest
 
-from chronotype import TemporalDict, TemporalList
+from chronotype import TemporalDict, TemporalList, TemporalSet
 
 
 class TestTemporalList:
@@ -435,3 +435,107 @@ class TestBackfilledDictMutations:
         t.set_item("n", 1)
         assert t.at(now()) == {"a": 1, "n": 1}
         assert t.at(future) == {"a": 1, "f": 1, "n": 1}
+
+
+class TestTemporalSet:
+    """TemporalSet (#2): same pattern as TemporalList, with per-element backfill."""
+
+    def test_create_and_copies(self, base_time):
+        source = {1, 2}
+        t = TemporalSet(initial=source, initial_time=base_time)
+        source.add(3)
+        assert t.current() == {1, 2}
+        t.current().add(4)
+        t.at(base_time).add(5)
+        assert t.at(base_time) == {1, 2}
+        assert len(TemporalSet(initial=set(), initial_time=base_time)) == 1
+        assert len(TemporalSet()) == 0
+
+    def test_add_discard_remove_update(self, base_time):
+        d1, d2, d3, d4 = _days(base_time, 1, 2, 3, 4)
+        t = TemporalSet()
+        t.add("a", d1)
+        t.update(["b", "c"], d2)
+        t.discard("a", d3)
+        t.remove("b", d4)
+        assert [v for _, v in t.history()] == [{"a"}, {"a", "b", "c"}, {"b", "c"}, {"c"}]
+        t.discard("zzz", d4)  # absent: no error
+        with pytest.raises(KeyError):
+            t.remove("zzz", d4)
+
+    def test_contains_at_and_len_at(self, base_time):
+        d0, d1, d2 = _days(base_time, 0, 1, 2)
+        t = TemporalSet(initial={"a"}, initial_time=d1)
+        t.add("b", d2)
+        assert t.contains_at(d1, "a") is True
+        assert t.contains_at(d1, "b") is False
+        assert t.contains_at(d2, "b") is True
+        assert t.contains_at(d0, "a") is False
+        assert t.len_at(d2) == 2
+        assert t.len_at(d0) is None
+
+    def test_default_timestamp_is_now(self):
+        t = TemporalSet()
+        t.add(1)
+        t.add(2)
+        assert t.current() == {1, 2}
+        assert len(t) == 2
+
+    def test_backfill_add(self, base_time):
+        d1, d2, d3 = _days(base_time, 1, 2, 3)
+        t = TemporalSet(initial={"a"}, initial_time=d1)
+        t.add("c", d3)
+        t.add("b", d2)
+        assert t.at(d2) == {"a", "b"}
+        assert t.at(d3) == {"a", "b", "c"}
+
+    def test_backfill_add_does_not_undo_later_discard(self, base_time):
+        d1, d2, d3, d4 = _days(base_time, 1, 2, 3, 4)
+        t = TemporalSet(initial=set(), initial_time=d1)
+        t.add("x", d3)
+        t.discard("x", d4)
+        t.add("x", d2)
+        assert [v for _, v in t.history()] == [set(), {"x"}, {"x"}, set()]
+
+    def test_backfill_discard_and_remove(self, base_time):
+        d1, d2, d3, d4 = _days(base_time, 1, 2, 3, 4)
+        t = TemporalSet(initial={"a", "b"}, initial_time=d1)
+        t.add("c", d3)
+        t.discard("a", d2)
+        assert t.at(d3) == {"b", "c"}
+        t.discard("b", d4)
+        t.add("b", d4 + timedelta(days=1))
+        t.remove("b", d2 + timedelta(hours=1))
+        assert t.at(d3) == {"c"}
+        assert t.at(d4 + timedelta(days=1)) == {"b", "c"}  # re-added later
+
+    def test_remove_validates_at_timestamp(self, base_time):
+        d1, d2, d3 = _days(base_time, 1, 2, 3)
+        t = TemporalSet(initial={"a"}, initial_time=d1)
+        t.add("b", d3)
+        with pytest.raises(KeyError):
+            t.remove("b", d2)
+
+    def test_clear_set(self, base_time):
+        d1, d2, d3 = _days(base_time, 1, 2, 3)
+        t = TemporalSet(initial={"a", "b"}, initial_time=d1)
+        t.add("c", d3)
+        t.clear_set(d2)
+        assert t.at(d2) == set()
+        assert t.at(d3) == {"c"}
+
+    def test_serialization_round_trip(self, base_time):
+        t = TemporalSet(initial={3, 1, 2}, initial_time=base_time)
+        t.discard(2, base_time + timedelta(days=1))
+        data = t.to_dict()
+        assert data["entries"][0]["value"] == [1, 2, 3]  # sorted, JSON-friendly
+        for restored in (TemporalSet.from_json(t.to_json()), TemporalSet.from_dict(data)):
+            assert type(restored) is TemporalSet
+            assert restored.history() == t.history()
+
+    def test_derived_keep_type(self, base_time):
+        t = TemporalSet(initial={1}, initial_time=base_time)
+        for derived in (t.copy(), t.slice(base_time, base_time), t.merge(TemporalSet())):
+            assert type(derived) is TemporalSet
+            derived.history()[0][1].add(99)
+            assert t.current() == {1}

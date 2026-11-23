@@ -7,7 +7,7 @@ import copy
 import json
 from collections.abc import Iterator
 from datetime import datetime
-from typing import Any, Callable, Generic, TypeVar
+from typing import Any, Callable, Generic, TypeVar, cast
 
 from chronotype.exceptions import EmptyTemporalError, InvalidTimestampError
 from chronotype.interpolation import (
@@ -371,6 +371,14 @@ class Temporal(Generic[T]):
         )
         return new
 
+    def _to_json_value(self, value: T) -> Any:
+        """Hook: JSON-native form of a value, used when no serializer is set."""
+        return value
+
+    def _from_json_value(self, raw: Any) -> T:
+        """Hook: inverse of :meth:`_to_json_value`."""
+        return cast(T, raw)
+
     def _serialize_value(self, value: T) -> dict[str, Any]:
         if self._serializer is not None:
             payload = self._serializer(value)
@@ -378,19 +386,20 @@ class Temporal(Generic[T]):
                 raise ValueError("Serializer must return a dict with 'type' and 'value' keys.")
             return {"type": payload["type"], "value": payload["value"]}
 
+        raw = self._to_json_value(value)
         try:
-            json.dumps(value)
+            json.dumps(raw)
         except TypeError as exc:
             raise TypeError(
                 f"Temporal value of type {type(value).__name__} is not JSON serializable; "
                 "provide serializer/deserializer callables."
             ) from exc
-        return {"type": None, "value": value}
+        return {"type": None, "value": raw}
 
     def _deserialize_value(self, payload: dict[str, Any]) -> T:
         value_type = payload.get("type")
         if value_type is None:
-            return payload.get("value")  # type: ignore[return-value]
+            return self._from_json_value(payload.get("value"))
         if self._deserializer is None:
             raise ValueError(
                 "Temporal entry includes type metadata but no deserializer was provided."
@@ -460,7 +469,7 @@ class Temporal(Generic[T]):
         for entry in data.get("entries", []):
             if isinstance(entry, (list, tuple)) and len(entry) == 2:
                 ts_str, value = entry
-                new.set(datetime.fromisoformat(ts_str), value)
+                new.set(datetime.fromisoformat(ts_str), new._from_json_value(value))
                 continue
             if not isinstance(entry, dict):
                 raise ValueError("Temporal entries must be dicts with timestamp/value metadata.")

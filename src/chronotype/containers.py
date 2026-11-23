@@ -10,16 +10,18 @@ container if there is none), not from the latest snapshot.
 also applied to them, so history stays consistent with the change having
 happened at ``timestamp``:
 
-* Additions (``append``, ``extend``, ``insert``, ``TemporalSet.add``...) are
-  applied to every later snapshot (``insert`` uses the same index).
-* Removals (``remove``, ``pop``, ``clear_list``, ``discard``...) remove the
-  same element(s) from later snapshots. Propagation of an element stops at the
+* List additions (``append``, ``extend``, ``insert``) are applied to every
+  later snapshot (``insert`` uses the same index).
+* List removals (``remove``, ``pop``, ``clear_list``) remove the same
+  element(s) from later snapshots. Propagation of an element stops at the
   first later snapshot that no longer contains it: a later entry already
   removed it, and everything after derives from that entry.
-* Dict changes (``set_item``, ``update_dict``, ``delete_item``, ``pop_item``,
-  ``clear_dict``) propagate key by key while the later snapshot still has the
-  key's previous state (same value, or still absent). The first later snapshot
-  with a different state for that key wins, and propagation of that key stops.
+* Dict and set changes (``set_item``, ``update_dict``, ``delete_item``,
+  ``pop_item``, ``clear_dict``; ``add``, ``update``, ``discard``, ``remove``,
+  ``clear_set``) propagate key by key (element by element) while the later
+  snapshot still has that key's previous state (same value / still absent /
+  still present). The first later snapshot with a different state wins and
+  stops propagation for that key: a later change takes precedence.
 
 Validation happens against the snapshot at ``timestamp``: e.g. ``remove(x, ts)``
 raises ``ValueError`` if ``x`` is not in the list at ``ts`` even if it is in a
@@ -29,6 +31,8 @@ modify other entries.
 
 from __future__ import annotations
 
+import builtins
+from collections.abc import Iterable
 from datetime import datetime
 from typing import Any, Callable, TypeVar
 
@@ -440,3 +444,136 @@ class TemporalDict(_TemporalContainer[dict[K, V]]):
 
     def _copy_value(self, value: dict[K, V]) -> dict[K, V]:
         return dict(value)
+
+
+class TemporalSet(_TemporalContainer[set[T]]):
+    """
+    Temporal set that tracks history of set changes.
+
+    Snapshots are stored as copies and returned as copies. Mutations with a
+    past timestamp are applied to later snapshots element by element; see the
+    module documentation of :mod:`chronotype.containers` for the exact rules.
+    Without a serializer, snapshots are written to JSON as sorted lists (or in
+    iteration order if the elements are not orderable).
+    """
+
+    def __init__(
+        self,
+        initial: Iterable[T] | None = None,
+        initial_time: TimestampType | None = None,
+        *,
+        serializer: Callable[[builtins.set[T]], dict[str, Any]] | None = None,
+        deserializer: Callable[[dict[str, Any]], builtins.set[T]] | None = None,
+    ) -> None:
+        """
+        Args:
+            initial: Optional initial elements (copied into a new set)
+            initial_time: Timestamp for the initial contents (defaults to now)
+            serializer: Optional callable used by to_dict()/to_json() for
+                contents that are not JSON-native
+            deserializer: Inverse of ``serializer``
+        """
+        super().__init__(
+            set(initial) if initial is not None else None,
+            initial_time,
+            StepInterpolation(),
+            serializer,
+            deserializer,
+        )
+
+    def set(self, timestamp: TimestampType, value: Iterable[T]) -> None:
+        """Set the set at timestamp, storing a copy."""
+        super().set(timestamp, set(value))
+
+    def at(self, timestamp: TimestampType) -> builtins.set[T] | None:
+        """Get the set at timestamp, returning a copy."""
+        value = super().at(timestamp)
+        return set(value) if value is not None else None
+
+    def current(self) -> builtins.set[T]:
+        """Get the most recent set value, returning a copy."""
+        return set(super().current())
+
+    def _snapshot(self, ts: datetime) -> builtins.set[T]:
+        snapshot = self.at(ts)
+        return snapshot if snapshot is not None else set()
+
+    def _apply_changes(
+        self, ts: datetime, snapshot: builtins.set[T], changes: dict[T, tuple[bool, bool]]
+    ) -> None:
+        """Record ``snapshot`` at ``ts`` and propagate ``element: (was_in, is_in)`` changes."""
+        self.set(ts, snapshot)
+        active = {item: change for item, change in changes.items() if change[0] != change[1]}
+
+        def later(current: builtins.set[T]) -> bool:
+            for item, (was_in, is_in) in list(active.items()):
+                if (item in current) != was_in:
+                    del active[item]  # changed later: the later entry wins
+                elif is_in:
+                    current.add(item)
+                else:
+                    current.discard(item)
+            return bool(active)
+
+        if active:
+            self._rebase_later(ts, later)
+
+    def add(self, value: T, timestamp: TimestampType | None = None) -> None:
+        """Add value to the set at ``timestamp`` (and to later snapshots)."""
+        self.update([value], timestamp)
+
+    def update(self, values: Iterable[T], timestamp: TimestampType | None = None) -> None:
+        """Add all values to the set at ``timestamp`` (and to later snapshots)."""
+        ts = self._mutation_time(timestamp)
+        snapshot = self._snapshot(ts)
+        changes = {item: (item in snapshot, True) for item in values}
+        snapshot.update(changes)
+        self._apply_changes(ts, snapshot, changes)
+
+    def discard(self, value: T, timestamp: TimestampType | None = None) -> None:
+        """Remove value from the set at ``timestamp`` if present (and from later snapshots)."""
+        ts = self._mutation_time(timestamp)
+        snapshot = self._snapshot(ts)
+        was_in = value in snapshot
+        snapshot.discard(value)
+        self._apply_changes(ts, snapshot, {value: (was_in, False)})
+
+    def remove(self, value: T, timestamp: TimestampType | None = None) -> None:
+        """Like :meth:`discard`, but raise KeyError if value is not in the set at ``timestamp``."""
+        ts = self._mutation_time(timestamp)
+        if value not in self._snapshot(ts):
+            raise KeyError(value)
+        self.discard(value, ts)
+
+    def clear_set(self, timestamp: TimestampType | None = None) -> None:
+        """
+        Empty the set at ``timestamp`` (the history is kept).
+
+        Later snapshots lose the elements present at ``timestamp`` unless a later
+        entry changed them.
+        """
+        ts = self._mutation_time(timestamp)
+        changes = dict.fromkeys(self._snapshot(ts), (True, False))
+        self._apply_changes(ts, set(), changes)
+
+    def contains_at(self, timestamp: TimestampType, value: T) -> bool:
+        """Check if value is in the set at timestamp."""
+        current = self.at(timestamp)
+        return value in current if current is not None else False
+
+    def len_at(self, timestamp: TimestampType) -> int | None:
+        """Get size of the set at timestamp."""
+        current = self.at(timestamp)
+        return len(current) if current is not None else None
+
+    def _copy_value(self, value: builtins.set[T]) -> builtins.set[T]:
+        return set(value)
+
+    def _to_json_value(self, value: builtins.set[T]) -> Any:
+        try:
+            return sorted(value)
+        except TypeError:
+            return list(value)
+
+    def _from_json_value(self, raw: Any) -> builtins.set[T]:
+        return set(raw)
