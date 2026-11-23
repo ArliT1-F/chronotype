@@ -1,0 +1,7 @@
+include CHANGELOG.md
+include LICENSE
+include README.md
+# Ship the whole test suite, including tests/conftest.py (fixtures) and
+# tests/__init__.py, which setuptools' default "tests/test*.py" pattern misses.
+recursive-include tests *.py
+global-exclude __pycache__ *.py[cod]

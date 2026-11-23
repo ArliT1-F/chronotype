@@ -27,3 +27,14 @@ class TestCleanups:
         import chronotype.exceptions
 
         assert not hasattr(chronotype.exceptions, "ImmutableTemporalError")
+
+
+class TestVersion:
+    def test_version_is_0_1_2_and_matches_pyproject(self):
+        import pathlib
+        import re
+
+        pyproject = pathlib.Path(__file__).resolve().parent.parent / "pyproject.toml"
+        match = re.search(r'^version = "([^"]+)"', pyproject.read_text(), re.MULTILINE)
+        assert match is not None
+        assert chronotype.__version__ == match.group(1) == "0.1.2"
