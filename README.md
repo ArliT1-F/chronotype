@@ -260,5 +260,13 @@ print(pickle.loads(pickle.dumps(temp)) == temp)  # True
 Values that are not JSON-native need `serializer`/`deserializer` callables, passed to the
 constructor and to `from_json()`.
 
+## Examples
+
+[`examples/git-strata`](examples/git-strata) is a command-line tool, built on chronotype,
+for exploring a git repository's history: what it looked like at any point in time, who
+wrote which parts, and how that changed (`git strata at v1.0`, `git strata owner src/`).
+Its [FINDINGS.md](examples/git-strata/FINDINGS.md) lists what building it showed about
+chronotype.
+
 ## License
 MIT License - see [LICENSE](LICENSE) file for details.
