@@ -26,7 +26,7 @@ class TemporalList(Temporal[list[T]]):
         initial_time: TimestampType | None = None,
     ) -> None:
         super().__init__(
-            list(initial) if initial else None,
+            list(initial) if initial is not None else None,
             initial_time,
             StepInterpolation(),
         )
@@ -148,7 +148,7 @@ class TemporalDict(Temporal[dict[K, V]]):
         initial_time: TimestampType | None = None,
     ) -> None:
         super().__init__(
-            dict(initial) if initial else None,
+            dict(initial) if initial is not None else None,
             initial_time,
             StepInterpolation(),
         )

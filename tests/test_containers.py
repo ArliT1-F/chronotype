@@ -169,3 +169,23 @@ class TestTemporalDict:
         value["b"] = 2
 
         assert t.at(base_time) == {"a": 1}
+
+
+class TestEmptyInitialContainer:
+    """Regression: an explicitly empty initial container must create an entry."""
+
+    def test_list_empty_initial_creates_entry(self, base_time):
+        t = TemporalList(initial=[], initial_time=base_time)
+        assert len(t) == 1
+        assert t.current() == []
+        assert t.at(base_time) == []
+
+    def test_dict_empty_initial_creates_entry(self, base_time):
+        t = TemporalDict(initial={}, initial_time=base_time)
+        assert len(t) == 1
+        assert t.current() == {}
+        assert t.at(base_time) == {}
+
+    def test_none_initial_creates_no_entry(self):
+        assert len(TemporalList()) == 0
+        assert len(TemporalDict()) == 0
