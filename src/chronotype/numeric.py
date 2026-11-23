@@ -2,14 +2,43 @@
 
 from __future__ import annotations
 
+import warnings
 from datetime import datetime
-from typing import Callable
+from typing import Any, Callable
 
 from chronotype.base import Temporal
 from chronotype.exceptions import InvalidTimestampError
 from chronotype.interpolation import InterpolationStrategy, LinearInterpolation, StepInterpolation
 from chronotype.query import NumericTemporalQuery
 from chronotype.utils import TimestampType, normalize_timestamp, now
+
+
+def _resolve_interpolation(
+    interpolation: InterpolationStrategy[Any] | bool | None,
+    interpolate: bool | None,
+) -> InterpolationStrategy[Any]:
+    """
+    Resolve the ``interpolation=`` argument and the deprecated ``interpolate=`` flag.
+
+    A bool passed as ``interpolation`` (e.g. the old positional
+    ``TemporalFloat(value, ts, True)``) is treated like ``interpolate=``.
+    """
+    if isinstance(interpolation, bool):
+        if interpolate is not None:
+            raise TypeError("pass either 'interpolation' or 'interpolate', not both")
+        interpolation, interpolate = None, interpolation
+    if interpolate is not None:
+        if interpolation is not None:
+            raise TypeError("pass either 'interpolation' or 'interpolate', not both")
+        replacement = "LinearInterpolation()" if interpolate else "StepInterpolation()"
+        warnings.warn(
+            f"'interpolate={interpolate}' is deprecated and will be removed in a future "
+            f"release; use 'interpolation={replacement}' instead.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        return LinearInterpolation() if interpolate else StepInterpolation()
+    return interpolation if interpolation is not None else StepInterpolation()
 
 
 class TemporalFloat(Temporal[float]):
@@ -21,7 +50,9 @@ class TemporalFloat(Temporal[float]):
         self,
         initial: float | None = None,
         initial_time: TimestampType | None = None,
-        interpolate: bool = False,
+        interpolation: InterpolationStrategy[Any] | None = None,
+        *,
+        interpolate: bool | None = None,
     ) -> None:
         """
         Initialize a temporal float.
@@ -29,13 +60,14 @@ class TemporalFloat(Temporal[float]):
         Args:
             initial: Optional initial value
             initial_time: Timestamp for initial value
-            interpolate: If True, use linear interpolation
+            interpolation: Interpolation strategy (default: StepInterpolation()).
+                Use ``LinearInterpolation()`` for linear interpolation.
+            interpolate: Deprecated alias; ``interpolate=True`` is equivalent to
+                ``interpolation=LinearInterpolation()``. Emits DeprecationWarning.
         """
-        interp: InterpolationStrategy[float] = (
-            LinearInterpolation() if interpolate else StepInterpolation()
+        super().__init__(
+            initial, initial_time, _resolve_interpolation(interpolation, interpolate)
         )
-        super().__init__(initial, initial_time, interp)
-        self._interpolate = interpolate
 
     def between(
         self,
@@ -64,13 +96,13 @@ class TemporalFloat(Temporal[float]):
 
     def __add__(self, other: TemporalFloat | float | int) -> TemporalFloat:
         if isinstance(other, (int, float)):
-            result = TemporalFloat(interpolate=self._interpolate)
+            result = TemporalFloat(interpolation=self._interpolation)
             for ts, v in self._timeline:
                 result[ts] = v + other
             return result
 
         all_times = sorted(set(self.timestamps() + other.timestamps()))
-        result = TemporalFloat(interpolate=self._interpolate)
+        result = TemporalFloat(interpolation=self._interpolation)
         for ts in all_times:
             v1 = self.at(ts)
             v2 = other.at(ts)
@@ -83,13 +115,13 @@ class TemporalFloat(Temporal[float]):
 
     def __sub__(self, other: TemporalFloat | float | int) -> TemporalFloat:
         if isinstance(other, (int, float)):
-            result = TemporalFloat(interpolate=self._interpolate)
+            result = TemporalFloat(interpolation=self._interpolation)
             for ts, v in self._timeline:
                 result[ts] = v - other
             return result
 
         all_times = sorted(set(self.timestamps() + other.timestamps()))
-        result = TemporalFloat(interpolate=self._interpolate)
+        result = TemporalFloat(interpolation=self._interpolation)
         for ts in all_times:
             v1 = self.at(ts)
             v2 = other.at(ts)
@@ -98,20 +130,20 @@ class TemporalFloat(Temporal[float]):
         return result
 
     def __rsub__(self, other: float | int) -> TemporalFloat:
-        result = TemporalFloat(interpolate=self._interpolate)
+        result = TemporalFloat(interpolation=self._interpolation)
         for ts, v in self._timeline:
             result[ts] = other - v
         return result
 
     def __mul__(self, other: TemporalFloat | float | int) -> TemporalFloat:
         if isinstance(other, (int, float)):
-            result = TemporalFloat(interpolate=self._interpolate)
+            result = TemporalFloat(interpolation=self._interpolation)
             for ts, v in self._timeline:
                 result[ts] = v * other
             return result
 
         all_times = sorted(set(self.timestamps() + other.timestamps()))
-        result = TemporalFloat(interpolate=self._interpolate)
+        result = TemporalFloat(interpolation=self._interpolation)
         for ts in all_times:
             v1 = self.at(ts)
             v2 = other.at(ts)
@@ -124,13 +156,13 @@ class TemporalFloat(Temporal[float]):
 
     def __truediv__(self, other: TemporalFloat | float | int) -> TemporalFloat:
         if isinstance(other, (int, float)):
-            result = TemporalFloat(interpolate=self._interpolate)
+            result = TemporalFloat(interpolation=self._interpolation)
             for ts, v in self._timeline:
                 result[ts] = v / other
             return result
 
         all_times = sorted(set(self.timestamps() + other.timestamps()))
-        result = TemporalFloat(interpolate=self._interpolate)
+        result = TemporalFloat(interpolation=self._interpolation)
         for ts in all_times:
             v1 = self.at(ts)
             v2 = other.at(ts)
@@ -139,7 +171,7 @@ class TemporalFloat(Temporal[float]):
         return result
 
     def __rtruediv__(self, other: float | int) -> TemporalFloat:
-        result = TemporalFloat(interpolate=self._interpolate)
+        result = TemporalFloat(interpolation=self._interpolation)
         for ts, v in self._timeline:
             if v != 0:
                 result[ts] = other / v
@@ -147,13 +179,13 @@ class TemporalFloat(Temporal[float]):
 
     def __pow__(self, other: TemporalFloat | float | int) -> TemporalFloat:
         if isinstance(other, (int, float)):
-            result = TemporalFloat(interpolate=self._interpolate)
+            result = TemporalFloat(interpolation=self._interpolation)
             for ts, v in self._timeline:
                 result[ts] = v**other
             return result
 
         all_times = sorted(set(self.timestamps() + other.timestamps()))
-        result = TemporalFloat(interpolate=self._interpolate)
+        result = TemporalFloat(interpolation=self._interpolation)
         for ts in all_times:
             v1 = self.at(ts)
             v2 = other.at(ts)
@@ -162,13 +194,13 @@ class TemporalFloat(Temporal[float]):
         return result
 
     def __neg__(self) -> TemporalFloat:
-        result = TemporalFloat(interpolate=self._interpolate)
+        result = TemporalFloat(interpolation=self._interpolation)
         for ts, v in self._timeline:
             result[ts] = -v
         return result
 
     def __abs__(self) -> TemporalFloat:
-        result = TemporalFloat(interpolate=self._interpolate)
+        result = TemporalFloat(interpolation=self._interpolation)
         for ts, v in self._timeline:
             result[ts] = abs(v)
         return result
@@ -215,8 +247,17 @@ class TemporalInt(Temporal[int]):
         self,
         initial: int | None = None,
         initial_time: TimestampType | None = None,
+        interpolation: InterpolationStrategy[Any] | None = None,
     ) -> None:
-        super().__init__(initial, initial_time, StepInterpolation())
+        """
+        Initialize a temporal integer.
+
+        Args:
+            initial: Optional initial value
+            initial_time: Timestamp for initial value
+            interpolation: Interpolation strategy (default: StepInterpolation()).
+        """
+        super().__init__(initial, initial_time, _resolve_interpolation(interpolation, None))
 
     def between(
         self,

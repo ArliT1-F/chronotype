@@ -4,7 +4,7 @@ from datetime import timedelta
 
 import pytest
 
-from chronotype import TemporalBool, TemporalFloat, TemporalInt
+from chronotype import LinearInterpolation, TemporalBool, TemporalFloat, TemporalInt
 
 
 class TestTemporalInt:
@@ -106,7 +106,8 @@ class TestTemporalInt:
 
 class TestTemporalFloat:
     def test_interpolation_disabled(self, base_time):
-        t = TemporalFloat(interpolate=False)
+        with pytest.warns(DeprecationWarning):
+            t = TemporalFloat(interpolate=False)
         t[base_time] = 10.0
         t[base_time + timedelta(hours=2)] = 20.0
 
@@ -114,7 +115,8 @@ class TestTemporalFloat:
         assert t.at(mid) == 10.0
 
     def test_interpolation_enabled(self, base_time):
-        t = TemporalFloat(interpolate=True)
+        with pytest.warns(DeprecationWarning):
+            t = TemporalFloat(interpolate=True)
         t[base_time] = 10.0
         t[base_time + timedelta(hours=2)] = 20.0
 
@@ -226,7 +228,7 @@ class TestDerivedNumericTemporals:
         assert merged.between(time_series[0], time_series[2]).max() == 3
 
     def test_float_slice_merge_copy_keep_interpolation(self, base_time):
-        t = TemporalFloat(interpolate=True)
+        t = TemporalFloat(interpolation=LinearInterpolation())
         t[base_time] = 0.0
         t[base_time + timedelta(hours=2)] = 20.0
         t[base_time + timedelta(hours=4)] = 40.0
@@ -249,3 +251,58 @@ class TestDerivedNumericTemporals:
         assert isinstance(b.slice(base_time, base_time), TemporalBool)
         assert isinstance(s.merge(TemporalString()), TemporalString)
         assert isinstance(s.deepcopy(), TemporalString)
+
+
+class TestInterpolationParameter:
+    """Regression (#12): numeric types take ``interpolation=``; ``interpolate=`` is deprecated."""
+
+    def _check_linear(self, t, base_time, expected_mid):
+        t[base_time] = 0
+        t[base_time + timedelta(hours=2)] = 20
+        assert t.at(base_time + timedelta(hours=1)) == expected_mid
+
+    def test_float_accepts_interpolation(self, base_time, recwarn):
+        self._check_linear(TemporalFloat(interpolation=LinearInterpolation()), base_time, 10.0)
+        assert not [w for w in recwarn if issubclass(w.category, DeprecationWarning)]
+
+    def test_int_accepts_interpolation(self, base_time):
+        self._check_linear(TemporalInt(interpolation=LinearInterpolation()), base_time, 10)
+
+    def test_int_accepts_nearest_interpolation(self, base_time):
+        from chronotype.interpolation import NearestInterpolation
+
+        t = TemporalInt(interpolation=NearestInterpolation())
+        t[base_time] = 1
+        t[base_time + timedelta(hours=2)] = 2
+        assert t.at(base_time + timedelta(minutes=30)) == 1
+        assert t.at(base_time + timedelta(minutes=90)) == 2
+
+    def test_default_is_step_without_warning(self, base_time, recwarn):
+        self._check_linear(TemporalFloat(), base_time, 0)
+        self._check_linear(TemporalInt(), base_time, 0)
+        assert not [w for w in recwarn if issubclass(w.category, DeprecationWarning)]
+
+    def test_interpolate_keyword_is_deprecated_alias(self, base_time):
+        with pytest.warns(DeprecationWarning, match="interpolation=LinearInterpolation"):
+            t = TemporalFloat(interpolate=True)
+        self._check_linear(t, base_time, 10.0)
+        with pytest.warns(DeprecationWarning):
+            t = TemporalFloat(interpolate=False)
+        self._check_linear(t, base_time, 0)
+
+    def test_positional_bool_is_deprecated_alias(self, base_time):
+        with pytest.warns(DeprecationWarning):
+            t = TemporalFloat(None, None, True)
+        self._check_linear(t, base_time, 10.0)
+
+    def test_both_arguments_rejected(self):
+        with pytest.raises(TypeError):
+            TemporalFloat(interpolation=LinearInterpolation(), interpolate=True)
+
+    def test_operations_do_not_warn_and_keep_interpolation(self, base_time, recwarn):
+        t = TemporalFloat(interpolation=LinearInterpolation())
+        t[base_time] = 0.0
+        t[base_time + timedelta(hours=2)] = 20.0
+        result = (t + 1.0) * 2.0
+        assert result.at(base_time + timedelta(hours=1)) == pytest.approx(22.0)
+        assert not [w for w in recwarn if issubclass(w.category, DeprecationWarning)]
