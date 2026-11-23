@@ -651,3 +651,70 @@ class TestDivisionByZero:
         assert isinstance(result, TemporalFloat)
         assert math.isnan(result.at(time_series[0]))
         assert result.at(time_series[1]) == 0.5
+
+
+class TestBoolRangesUntil:
+    """Regression (#10): open ranges end at ``until`` and never have negative length."""
+
+    def test_future_start_has_zero_duration(self):
+        from chronotype.utils import now
+
+        start = now() + timedelta(days=1)
+        t = TemporalBool()
+        t[start] = True
+        assert t.when_true() == [(start, start)]
+        assert t.duration_true() == 0.0
+        t2 = TemporalBool()
+        t2[start] = False
+        assert t2.duration_false() == 0.0
+
+    def test_until_ends_open_range(self, base_time):
+        t = TemporalBool()
+        t[base_time] = True
+        t[base_time + timedelta(hours=2)] = False
+        t[base_time + timedelta(hours=4)] = True
+        until = base_time + timedelta(hours=5)
+
+        assert t.when_true(until=until) == [
+            (base_time, base_time + timedelta(hours=2)),
+            (base_time + timedelta(hours=4), until),
+        ]
+        assert t.duration_true(until=until) == 3 * 3600
+        assert t.when_false(until=until) == [
+            (base_time + timedelta(hours=2), base_time + timedelta(hours=4))
+        ]
+        assert t.duration_false(until=until) == 2 * 3600
+
+    def test_until_before_open_range_is_clamped(self, base_time):
+        t = TemporalBool()
+        t[base_time] = False
+        t[base_time + timedelta(hours=4)] = True
+        until = base_time + timedelta(hours=1)
+        assert t.when_true(until=until) == [
+            (base_time + timedelta(hours=4), base_time + timedelta(hours=4))
+        ]
+        assert t.duration_true(until=until) == 0.0
+        # closed ranges are not truncated by ``until``
+        assert t.duration_false(until=until) == 4 * 3600
+
+    def test_until_accepts_dates_and_naive_datetimes(self, base_time):
+        from datetime import date, datetime
+
+        t = TemporalBool()
+        t[base_time] = True
+        assert t.duration_true(until=date(2024, 1, 2)) == 86400
+        assert t.duration_true(until=datetime(2024, 1, 1, 12)) == 43200
+
+    def test_default_until_is_now(self, base_time):
+        from chronotype.utils import now
+
+        t = TemporalBool()
+        t[base_time] = True
+        before = now()
+        (start, end), = t.when_true()
+        assert start == base_time
+        assert before <= end <= now()
+
+    def test_empty(self):
+        assert TemporalBool().when_true(until=None) == []
+        assert TemporalBool().duration_false() == 0.0

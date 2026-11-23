@@ -416,54 +416,48 @@ class TemporalBool(Temporal[bool]):
         result._set_timeline([(ts, not v) for ts, v in self._timeline])
         return result
 
-    def when_true(self) -> list[tuple[datetime, datetime]]:
-        """Get list of time ranges when value was True."""
-        if not self._timeline:
-            return []
-
-        ranges = []
-        start = None
+    def _ranges(
+        self, target: bool, until: TimestampType | None
+    ) -> list[tuple[datetime, datetime]]:
+        ranges: list[tuple[datetime, datetime]] = []
+        start: datetime | None = None
 
         for ts, value in self._timeline:
-            if value and start is None:
+            if bool(value) == target and start is None:
                 start = ts
-            elif not value and start is not None:
+            elif bool(value) != target and start is not None:
                 ranges.append((start, ts))
                 start = None
 
         if start is not None:
-            ranges.append((start, now()))
+            end = normalize_timestamp(until) if until is not None else now()
+            ranges.append((start, max(start, end)))
 
         return ranges
 
-    def when_false(self) -> list[tuple[datetime, datetime]]:
-        """Get list of time ranges when value was False."""
-        if not self._timeline:
-            return []
+    def when_true(self, until: TimestampType | None = None) -> list[tuple[datetime, datetime]]:
+        """
+        Get the ``(start, end)`` time ranges during which the value was True.
 
-        ranges = []
-        start = None
+        Args:
+            until: End for a range that is still open at the last entry
+                (default: now). It is clamped to the range's start, so a range
+                is never negative (zero-length if ``until`` is before it starts).
+                Closed ranges are returned unchanged.
+        """
+        return self._ranges(True, until)
 
-        for ts, value in self._timeline:
-            if not value and start is None:
-                start = ts
-            elif value and start is not None:
-                ranges.append((start, ts))
-                start = None
+    def when_false(self, until: TimestampType | None = None) -> list[tuple[datetime, datetime]]:
+        """Get the time ranges during which the value was False (see :meth:`when_true`)."""
+        return self._ranges(False, until)
 
-        if start is not None:
-            ranges.append((start, now()))
+    def duration_true(self, until: TimestampType | None = None) -> float:
+        """Total seconds when value was True (never negative; see :meth:`when_true`)."""
+        return sum((end - start).total_seconds() for start, end in self.when_true(until))
 
-        return ranges
-
-    def duration_true(self) -> float:
-        """Total seconds when value was True."""
-        return sum((end - start).total_seconds() for start, end in self.when_true())
-
-    def duration_false(self) -> float:
-        """Total seconds when value was False."""
-        return sum((end - start).total_seconds() for start, end in self.when_false())
-
+    def duration_false(self, until: TimestampType | None = None) -> float:
+        """Total seconds when value was False (never negative; see :meth:`when_true`)."""
+        return sum((end - start).total_seconds() for start, end in self.when_false(until))
 
 
 class TemporalString(Temporal[str]):
