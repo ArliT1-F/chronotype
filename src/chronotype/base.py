@@ -7,7 +7,7 @@ import copy
 import json
 from collections.abc import Iterator
 from datetime import datetime
-from typing import Any, Callable, Generic, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, cast
 
 from chronotype.exceptions import EmptyTemporalError, InvalidTimestampError
 from chronotype.interpolation import (
@@ -18,6 +18,9 @@ from chronotype.interpolation import (
 )
 from chronotype.query import TemporalQuery
 from chronotype.utils import TimestampType, normalize_timestamp, now
+
+if TYPE_CHECKING:
+    from chronotype.numeric import TemporalBool
 
 T = TypeVar("T")
 _TemporalT = TypeVar("_TemporalT", bound="Temporal[Any]")
@@ -100,6 +103,10 @@ class Temporal(Generic[T]):
         else:
             self._timeline.insert(idx, (ts, value))
             self._keys.insert(idx, ts)
+
+    def set_now(self, value: T) -> None:
+        """Record ``value`` at the current time (UTC)."""
+        self.set(now(), value)
 
     def __setitem__(self, timestamp: TimestampType, value: T) -> None:
         """Set value at timestamp using bracket notation."""
@@ -259,9 +266,38 @@ class Temporal(Generic[T]):
         return f"{name}(entries={len(self._timeline)}, current={self._timeline[-1][1]!r})"
 
     def __eq__(self, other: object) -> bool:
+        """
+        Structural equality: ``True`` if ``other`` is a Temporal with an identical
+        timeline (same timestamps and values). The class and the interpolation
+        strategy are not compared. Unlike ``<``/``>`` on numeric temporals, this
+        returns a plain ``bool``; use :meth:`eq`/:meth:`ne` for a point-by-point
+        TemporalBool.
+        """
         if not isinstance(other, Temporal):
             return NotImplemented
         return self._timeline == other._timeline
+
+    def eq(self, other: object) -> TemporalBool:
+        """
+        Point-by-point equality as a TemporalBool.
+
+        ``other`` is either a Temporal (both are evaluated at the union of their
+        timestamps, skipping times where either has no value yet) or a plain
+        value compared with every entry.
+        """
+        from chronotype.numeric import TemporalBool
+
+        result = TemporalBool()
+        result._set_timeline(self._pointwise(other, lambda a, b: bool(a == b)))
+        return result
+
+    def ne(self, other: object) -> TemporalBool:
+        """Point-by-point inequality as a TemporalBool (see :meth:`eq`)."""
+        from chronotype.numeric import TemporalBool
+
+        result = TemporalBool()
+        result._set_timeline(self._pointwise(other, lambda a, b: bool(a != b)))
+        return result
 
     def _empty_like(self: _TemporalT) -> _TemporalT:
         """

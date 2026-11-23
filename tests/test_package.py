@@ -18,3 +18,12 @@ class TestExports:
             assert hasattr(chronotype, name), name
         for name in ("TemporalString", "TemporalSet", "NearestInterpolation"):
             assert name in chronotype.__all__
+
+
+class TestCleanups:
+    """#14: unused API removed."""
+
+    def test_unused_immutable_error_removed(self):
+        import chronotype.exceptions
+
+        assert not hasattr(chronotype.exceptions, "ImmutableTemporalError")

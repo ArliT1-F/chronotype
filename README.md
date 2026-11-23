@@ -79,6 +79,9 @@ count = TemporalInt(initial=0)
 # Empty, to be populated
 score = TemporalInt()
 
+# Record a value at the current time
+score.set_now(10)
+
 # Generic temporal for custom types
 from dataclasses import dataclass
 
@@ -220,6 +223,10 @@ print((a / zero).at(date(2024, 1, 1)))  # nan
 # Comparison creates TemporalBool
 is_greater = a > b
 print(is_greater.at(date(2024, 1, 1)))  # True
+
+# == compares whole histories; .eq()/.ne() compare point by point
+print(a == a.copy())                 # True
+print(a.eq(b).at(date(2024, 1, 1)))  # False
 ```
 
 `TemporalInt // 0` and `TemporalInt % 0` raise `ZeroDivisionError` because an int result

@@ -507,3 +507,77 @@ class TestSerializationConfig:
         restored = Temporal[int].from_dict(data)
         assert restored.values() == [1, 2]
         assert restored.at(base_time + timedelta(hours=1)) == 1
+
+
+class TestEqualityAndSetNow:
+    """#14: structural __eq__, point-by-point eq()/ne(), set_now()."""
+
+    def test_eq_operator_is_structural_bool(self, time_series):
+        from chronotype import TemporalInt
+
+        a = TemporalInt()
+        a[time_series[0]] = 1
+        b = a.copy()
+        assert (a == b) is True
+        b[time_series[1]] = 1
+        assert (a == b) is False
+        assert (a != b) is True
+        assert a.__eq__(1) is NotImplemented
+
+    def test_eq_and_ne_with_scalar(self, time_series):
+        from chronotype import TemporalBool
+
+        t = Temporal[str]()
+        t[time_series[0]] = "a"
+        t[time_series[1]] = "b"
+        eq = t.eq("a")
+        assert isinstance(eq, TemporalBool)
+        assert eq.history() == [(time_series[0], True), (time_series[1], False)]
+        assert t.ne("a").history() == [(time_series[0], False), (time_series[1], True)]
+
+    def test_eq_with_temporal_is_aligned(self, time_series):
+        from chronotype import TemporalFloat, TemporalInt
+
+        a = TemporalInt()
+        a[time_series[0]] = 1
+        a[time_series[2]] = 2
+        b = TemporalFloat()
+        b[time_series[1]] = 1.0
+        b[time_series[3]] = 2.0
+        assert a.eq(b).history() == [
+            (time_series[1], True),
+            (time_series[2], False),
+            (time_series[3], True),
+        ]
+        assert a.ne(b).at(time_series[2]) is True
+
+    def test_eq_on_containers(self, base_time):
+        from chronotype import TemporalList
+
+        t = TemporalList(initial=[1, 2], initial_time=base_time)
+        assert t.eq([1, 2]).at(base_time) is True
+        assert t.ne([2, 1]).at(base_time) is True
+
+    def test_set_now(self):
+        from chronotype.utils import now
+
+        t = Temporal[int]()
+        before = now()
+        t.set_now(5)
+        after = now()
+        (ts, value), = t.history()
+        assert value == 5
+        assert before <= ts <= after
+        assert ts.tzinfo is not None
+        t.set_now(6)
+        assert t.current() == 6
+        assert len(t) == 2
+
+    def test_set_now_on_containers_stores_copy(self):
+        from chronotype import TemporalList
+
+        t = TemporalList()
+        items = [1]
+        t.set_now(items)
+        items.append(2)
+        assert t.current() == [1]

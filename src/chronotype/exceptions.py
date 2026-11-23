@@ -27,9 +27,3 @@ class InterpolationError(ChronotypeError):
     def __init__(self, message: str = "Interpolation failed") -> None:
         super().__init__(message)
 
-
-class ImmutableTemporalError(ChronotypeError):
-    """Raised when trying to modify an immutable temporal."""
-
-    def __init__(self, message: str = "Cannot modify immutable temporal") -> None:
-        super().__init__(message)
