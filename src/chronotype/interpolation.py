@@ -53,6 +53,10 @@ class LinearInterpolation(InterpolationStrategy[N]):
     """
     Linear interpolation for numeric types.
     Calculates value based on linear progression between points.
+
+    When both neighbouring values are ints the result is rounded to the
+    nearest int with :func:`round` (round-half-to-even, so -1.5 -> -2,
+    0.5 -> 0, 1.5 -> 2) so that TemporalInt.at() always returns an int.
     """
 
     def interpolate(
@@ -86,7 +90,9 @@ class LinearInterpolation(InterpolationStrategy[N]):
         result = before_val + (after_val - before_val) * ratio
 
         if isinstance(before_val, int) and isinstance(after_val, int):
-            return int(result)
+            # Integer endpoints yield an integer: round to the nearest value
+            # (ties go to the even neighbour, as with built-in round()).
+            return round(result)
         return result
 
 

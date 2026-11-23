@@ -378,3 +378,35 @@ class TestNumericSerializationRoundTrip:
         restored = TemporalInt.from_json(t.to_json())
         assert (restored + 1).at(time_series[1]) == 21
         assert restored.between(time_series[0], time_series[2]).max() == 30
+
+
+class TestIntLinearInterpolationRounding:
+    """Regression (#11): linear interpolation of ints rounds instead of truncating."""
+
+    def _linear_int(self, base_time, a, b):
+        t = TemporalInt(interpolation=LinearInterpolation())
+        t[base_time] = a
+        t[base_time + timedelta(hours=4)] = b
+        return t
+
+    def test_negative_values_round_not_truncate(self, base_time):
+        t = self._linear_int(base_time, 0, -4)
+        # 3/4 of the way from 0 to -4 is -3.0; 3/8 of the way is -1.5
+        assert t.at(base_time + timedelta(hours=3)) == -3
+        assert t.at(base_time + timedelta(minutes=90)) == -2  # int() gave -1
+        assert t.at(base_time + timedelta(minutes=165)) == -3  # -2.75; int() gave -2
+
+    def test_positive_values_round_to_nearest(self, base_time):
+        t = self._linear_int(base_time, 0, 4)
+        assert t.at(base_time + timedelta(minutes=165)) == 3  # 2.75; int() gave 2
+        assert t.at(base_time + timedelta(minutes=45)) == 1  # 0.75; int() gave 0
+
+    def test_ties_round_half_to_even(self, base_time):
+        t = self._linear_int(base_time, 0, 1)
+        assert t.at(base_time + timedelta(hours=2)) == 0  # 0.5 -> 0
+        t = self._linear_int(base_time, 1, 2)
+        assert t.at(base_time + timedelta(hours=2)) == 2  # 1.5 -> 2
+
+    def test_result_is_int(self, base_time):
+        value = self._linear_int(base_time, 0, 3).at(base_time + timedelta(hours=1))
+        assert type(value) is int
