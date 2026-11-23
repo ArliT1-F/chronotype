@@ -2,10 +2,7 @@
 
 from datetime import timedelta
 
-import pytest
-
 from chronotype import TemporalDict, TemporalList
-from chronotype.exceptions import EmptyTemporalError
 
 
 class TestTemporalList:
@@ -75,15 +72,15 @@ class TestTemporalList:
         t = TemporalList(initial=[1, 2], initial_time=base_time)
         current = t.current()
         current.append(3)
-        
+
         assert t.current() == [1, 2]
-        
+
     def test_at_returns_copy(self, base_time):
         t = TemporalList(initial=[1, 2], initial_time=base_time)
         value = t.at(base_time)
         assert value is not None
         value.append(3)
-        
+
         assert t.at(base_time) == [1, 2]
 
 class TestTemporalDict:
@@ -134,7 +131,7 @@ class TestTemporalDict:
         keys = t.keys_at(base_time)
         values = t.values_at(base_time)
         items = t.items_at(base_time)
-        
+
         assert keys is not None and set(keys) == {"a", "b"}
         assert values is not None and set(values) == {1, 2}
         assert items is not None and set(items) == {("a", 1), ("b", 2)}
@@ -157,7 +154,7 @@ class TestTemporalDict:
         history = t.history()
         assert history[0][1] == {"a": 1}
         assert history[1][1] == {"a": 1, "b": 2}
-        
+
     def test_current_returns_copy(self, base_time):
         t = TemporalDict(initial={"a": 1}, initial_time=base_time)
         current = t.current()

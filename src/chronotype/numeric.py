@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Callable, Dict, Iterator, List, Optional, Tuple, Union, overload
+from typing import Callable
 
 from chronotype.base import Temporal
-from chronotype.exceptions import EmptyTemporalError, InvalidTimestampError
+from chronotype.exceptions import InvalidTimestampError
 from chronotype.interpolation import InterpolationStrategy, LinearInterpolation, StepInterpolation
 from chronotype.query import NumericTemporalQuery
 from chronotype.utils import TimestampType, normalize_timestamp, now
@@ -19,8 +19,8 @@ class TemporalFloat(Temporal[float]):
 
     def __init__(
         self,
-        initial: Optional[float] = None,
-        initial_time: Optional[TimestampType] = None,
+        initial: float | None = None,
+        initial_time: TimestampType | None = None,
         interpolate: bool = False,
     ) -> None:
         """
@@ -47,12 +47,12 @@ class TemporalFloat(Temporal[float]):
         """Query values between timestamps with numeric aggregations."""
         start_dt = normalize_timestamp(start)
         end_dt = normalize_timestamp(end)
-        
+
         if start_dt > end_dt:
             raise InvalidTimestampError("Start must be before or equal to end")
 
         entries = []
-        value_before: Optional[float] = None
+        value_before: float | None = None
 
         for ts, value in self._timeline:
             if ts < start_dt:
@@ -74,7 +74,7 @@ class TemporalFloat(Temporal[float]):
             entries, start_dt, end_dt, include_start, include_end, value_before
         )
 
-    def __add__(self, other: Union[TemporalFloat, float, int]) -> TemporalFloat:
+    def __add__(self, other: TemporalFloat | float | int) -> TemporalFloat:
         if isinstance(other, (int, float)):
             result = TemporalFloat(interpolate=self._interpolate)
             for ts, v in self._timeline:
@@ -90,10 +90,10 @@ class TemporalFloat(Temporal[float]):
                 result[ts] = v1 + v2
         return result
 
-    def __radd__(self, other: Union[float, int]) -> TemporalFloat:
+    def __radd__(self, other: float | int) -> TemporalFloat:
         return self.__add__(other)
 
-    def __sub__(self, other: Union[TemporalFloat, float, int]) -> TemporalFloat:
+    def __sub__(self, other: TemporalFloat | float | int) -> TemporalFloat:
         if isinstance(other, (int, float)):
             result = TemporalFloat(interpolate=self._interpolate)
             for ts, v in self._timeline:
@@ -109,13 +109,13 @@ class TemporalFloat(Temporal[float]):
                 result[ts] = v1 - v2
         return result
 
-    def __rsub__(self, other: Union[float, int]) -> TemporalFloat:
+    def __rsub__(self, other: float | int) -> TemporalFloat:
         result = TemporalFloat(interpolate=self._interpolate)
         for ts, v in self._timeline:
             result[ts] = other - v
         return result
 
-    def __mul__(self, other: Union[TemporalFloat, float, int]) -> TemporalFloat:
+    def __mul__(self, other: TemporalFloat | float | int) -> TemporalFloat:
         if isinstance(other, (int, float)):
             result = TemporalFloat(interpolate=self._interpolate)
             for ts, v in self._timeline:
@@ -131,10 +131,10 @@ class TemporalFloat(Temporal[float]):
                 result[ts] = v1 * v2
         return result
 
-    def __rmul__(self, other: Union[float, int]) -> TemporalFloat:
+    def __rmul__(self, other: float | int) -> TemporalFloat:
         return self.__mul__(other)
 
-    def __truediv__(self, other: Union[TemporalFloat, float, int]) -> TemporalFloat:
+    def __truediv__(self, other: TemporalFloat | float | int) -> TemporalFloat:
         if isinstance(other, (int, float)):
             result = TemporalFloat(interpolate=self._interpolate)
             for ts, v in self._timeline:
@@ -150,14 +150,14 @@ class TemporalFloat(Temporal[float]):
                 result[ts] = v1 / v2
         return result
 
-    def __rtruediv__(self, other: Union[float, int]) -> TemporalFloat:
+    def __rtruediv__(self, other: float | int) -> TemporalFloat:
         result = TemporalFloat(interpolate=self._interpolate)
         for ts, v in self._timeline:
             if v != 0:
                 result[ts] = other / v
         return result
 
-    def __pow__(self, other: Union[TemporalFloat, float, int]) -> TemporalFloat:
+    def __pow__(self, other: TemporalFloat | float | int) -> TemporalFloat:
         if isinstance(other, (int, float)):
             result = TemporalFloat(interpolate=self._interpolate)
             for ts, v in self._timeline:
@@ -185,21 +185,21 @@ class TemporalFloat(Temporal[float]):
             result[ts] = abs(v)
         return result
 
-    def __lt__(self, other: Union[TemporalFloat, float, int]) -> "TemporalBool":
+    def __lt__(self, other: TemporalFloat | float | int) -> TemporalBool:
         return self._compare(other, lambda a, b: a < b)
 
-    def __le__(self, other: Union[TemporalFloat, float, int]) -> "TemporalBool":
+    def __le__(self, other: TemporalFloat | float | int) -> TemporalBool:
         return self._compare(other, lambda a, b: a <= b)
 
-    def __gt__(self, other: Union[TemporalFloat, float, int]) -> "TemporalBool":
+    def __gt__(self, other: TemporalFloat | float | int) -> TemporalBool:
         return self._compare(other, lambda a, b: a > b)
 
-    def __ge__(self, other: Union[TemporalFloat, float, int]) -> "TemporalBool":
+    def __ge__(self, other: TemporalFloat | float | int) -> TemporalBool:
         return self._compare(other, lambda a, b: a >= b)
 
     def _compare(
-        self, other: Union[TemporalFloat, float, int], op: Callable[[float, float], bool]
-    ) -> "TemporalBool":
+        self, other: TemporalFloat | float | int, op: Callable[[float, float], bool]
+    ) -> TemporalBool:
         from chronotype.numeric import TemporalBool
 
         if isinstance(other, (int, float)):
@@ -231,8 +231,8 @@ class TemporalInt(Temporal[int]):
 
     def __init__(
         self,
-        initial: Optional[int] = None,
-        initial_time: Optional[TimestampType] = None,
+        initial: int | None = None,
+        initial_time: TimestampType | None = None,
     ) -> None:
         super().__init__(initial, initial_time, StepInterpolation())
 
@@ -246,12 +246,12 @@ class TemporalInt(Temporal[int]):
         """Query values between timestamps with numeric aggregations."""
         start_dt = normalize_timestamp(start)
         end_dt = normalize_timestamp(end)
-        
+
         if start_dt > end_dt:
             raise InvalidTimestampError("Start must be before or equal to end")
 
         entries = []
-        value_before: Optional[int] = None
+        value_before: int | None = None
 
         for ts, value in self._timeline:
             if ts < start_dt:
@@ -273,7 +273,7 @@ class TemporalInt(Temporal[int]):
             entries, start_dt, end_dt, include_start, include_end, value_before
         )
 
-    def __add__(self, other: Union[TemporalInt, int]) -> TemporalInt:
+    def __add__(self, other: TemporalInt | int) -> TemporalInt:
         if isinstance(other, int):
             result = TemporalInt()
             for ts, v in self._timeline:
@@ -292,7 +292,7 @@ class TemporalInt(Temporal[int]):
     def __radd__(self, other: int) -> TemporalInt:
         return self.__add__(other)
 
-    def __sub__(self, other: Union[TemporalInt, int]) -> TemporalInt:
+    def __sub__(self, other: TemporalInt | int) -> TemporalInt:
         if isinstance(other, int):
             result = TemporalInt()
             for ts, v in self._timeline:
@@ -314,7 +314,7 @@ class TemporalInt(Temporal[int]):
             result[ts] = other - v
         return result
 
-    def __mul__(self, other: Union[TemporalInt, int]) -> TemporalInt:
+    def __mul__(self, other: TemporalInt | int) -> TemporalInt:
         if isinstance(other, int):
             result = TemporalInt()
             for ts, v in self._timeline:
@@ -333,7 +333,7 @@ class TemporalInt(Temporal[int]):
     def __rmul__(self, other: int) -> TemporalInt:
         return self.__mul__(other)
 
-    def __truediv__(self, other: Union[TemporalInt, TemporalFloat, int, float]) -> TemporalFloat:
+    def __truediv__(self, other: TemporalInt | TemporalFloat | int | float) -> TemporalFloat:
         if isinstance(other, (int, float)):
             result = TemporalFloat()
             for ts, v in self._timeline:
@@ -349,7 +349,7 @@ class TemporalInt(Temporal[int]):
                 result[ts] = v1 / v2
         return result
 
-    def __floordiv__(self, other: Union[TemporalInt, int]) -> TemporalInt:
+    def __floordiv__(self, other: TemporalInt | int) -> TemporalInt:
         if isinstance(other, int):
             result = TemporalInt()
             for ts, v in self._timeline:
@@ -365,7 +365,7 @@ class TemporalInt(Temporal[int]):
                 result[ts] = v1 // v2
         return result
 
-    def __mod__(self, other: Union[TemporalInt, int]) -> TemporalInt:
+    def __mod__(self, other: TemporalInt | int) -> TemporalInt:
         if isinstance(other, int):
             result = TemporalInt()
             for ts, v in self._timeline:
@@ -381,7 +381,7 @@ class TemporalInt(Temporal[int]):
                 result[ts] = v1 % v2
         return result
 
-    def __pow__(self, other: Union[TemporalInt, int]) -> TemporalInt:
+    def __pow__(self, other: TemporalInt | int) -> TemporalInt:
         if isinstance(other, int):
             result = TemporalInt()
             for ts, v in self._timeline:
@@ -409,19 +409,19 @@ class TemporalInt(Temporal[int]):
             result[ts] = abs(v)
         return result
 
-    def __lt__(self, other: Union[TemporalInt, int]) -> "TemporalBool":
+    def __lt__(self, other: TemporalInt | int) -> TemporalBool:
         return self._compare(other, lambda a, b: a < b)
 
-    def __le__(self, other: Union[TemporalInt, int]) -> "TemporalBool":
+    def __le__(self, other: TemporalInt | int) -> TemporalBool:
         return self._compare(other, lambda a, b: a <= b)
 
-    def __gt__(self, other: Union[TemporalInt, int]) -> "TemporalBool":
+    def __gt__(self, other: TemporalInt | int) -> TemporalBool:
         return self._compare(other, lambda a, b: a > b)
 
-    def __ge__(self, other: Union[TemporalInt, int]) -> "TemporalBool":
+    def __ge__(self, other: TemporalInt | int) -> TemporalBool:
         return self._compare(other, lambda a, b: a >= b)
 
-    def _compare(self, other: Union[TemporalInt, int], op: Callable[[int, int], bool]) -> "TemporalBool":
+    def _compare(self, other: TemporalInt | int, op: Callable[[int, int], bool]) -> TemporalBool:
         if isinstance(other, int):
             result = TemporalBool()
             for ts, v in self._timeline:
@@ -458,12 +458,12 @@ class TemporalBool(Temporal[bool]):
 
     def __init__(
         self,
-        initial: Optional[bool] = None,
-        initial_time: Optional[TimestampType] = None,
+        initial: bool | None = None,
+        initial_time: TimestampType | None = None,
     ) -> None:
         super().__init__(initial, initial_time, StepInterpolation())
 
-    def __and__(self, other: Union[TemporalBool, bool]) -> TemporalBool:
+    def __and__(self, other: TemporalBool | bool) -> TemporalBool:
         if isinstance(other, bool):
             result = TemporalBool()
             for ts, v in self._timeline:
@@ -482,7 +482,7 @@ class TemporalBool(Temporal[bool]):
     def __rand__(self, other: bool) -> TemporalBool:
         return self.__and__(other)
 
-    def __or__(self, other: Union[TemporalBool, bool]) -> TemporalBool:
+    def __or__(self, other: TemporalBool | bool) -> TemporalBool:
         if isinstance(other, bool):
             result = TemporalBool()
             for ts, v in self._timeline:
@@ -501,7 +501,7 @@ class TemporalBool(Temporal[bool]):
     def __ror__(self, other: bool) -> TemporalBool:
         return self.__or__(other)
 
-    def __xor__(self, other: Union[TemporalBool, bool]) -> TemporalBool:
+    def __xor__(self, other: TemporalBool | bool) -> TemporalBool:
         if isinstance(other, bool):
             result = TemporalBool()
             for ts, v in self._timeline:
@@ -526,7 +526,7 @@ class TemporalBool(Temporal[bool]):
             result[ts] = not v
         return result
 
-    def when_true(self) -> List[Tuple[datetime, datetime]]:
+    def when_true(self) -> list[tuple[datetime, datetime]]:
         """Get list of time ranges when value was True."""
         if not self._timeline:
             return []
@@ -546,7 +546,7 @@ class TemporalBool(Temporal[bool]):
 
         return ranges
 
-    def when_false(self) -> List[Tuple[datetime, datetime]]:
+    def when_false(self) -> list[tuple[datetime, datetime]]:
         """Get list of time ranges when value was False."""
         if not self._timeline:
             return []
@@ -588,12 +588,12 @@ class TemporalString(Temporal[str]):
 
     def __init__(
         self,
-        initial: Optional[str] = None,
-        initial_time: Optional[TimestampType] = None,
+        initial: str | None = None,
+        initial_time: TimestampType | None = None,
     ) -> None:
         super().__init__(initial, initial_time, StepInterpolation())
 
-    def __add__(self, other: Union[TemporalString, str]) -> TemporalString:
+    def __add__(self, other: TemporalString | str) -> TemporalString:
         if isinstance(other, str):
             result = TemporalString()
             for ts, v in self._timeline:

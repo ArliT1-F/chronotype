@@ -5,18 +5,9 @@ from __future__ import annotations
 import bisect
 import copy
 import json
+from collections.abc import Iterator
 from datetime import datetime
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Generic,
-    Iterator,
-    List,
-    Optional,
-    Tuple,
-    TypeVar
-)
+from typing import Any, Callable, Generic, TypeVar
 
 from chronotype.exceptions import EmptyTemporalError, InvalidTimestampError
 from chronotype.interpolation import InterpolationStrategy, StepInterpolation
@@ -36,11 +27,11 @@ class Temporal(Generic[T]):
 
     def __init__(
         self,
-        initial: Optional[T] = None,
-        initial_time: Optional[TimestampType] = None,
-        interpolation: Optional[InterpolationStrategy[T]] = None,
-        serializer: Optional[Callable[[T], Dict[str, Any]]] = None,
-        deserializer: Optional[Callable[[Dict[str, Any]], T]] = None,
+        initial: T | None = None,
+        initial_time: TimestampType | None = None,
+        interpolation: InterpolationStrategy[T] | None = None,
+        serializer: Callable[[T], dict[str, Any]] | None = None,
+        deserializer: Callable[[dict[str, Any]], T] | None = None,
     ) -> None:
         """
         Initialize a temporal value.
@@ -50,7 +41,7 @@ class Temporal(Generic[T]):
             initial_time: Timestamp for initial value (defaults to now)
             interpolation: Strategy for interpolating between values
         """
-        self._timeline: List[Tuple[datetime, T]] = []
+        self._timeline: list[tuple[datetime, T]] = []
         self._interpolation: InterpolationStrategy[T] = interpolation or StepInterpolation()
         self._serializer = serializer
         self._deserializer = deserializer
@@ -83,7 +74,7 @@ class Temporal(Generic[T]):
         """Set value at timestamp using bracket notation."""
         self.set(timestamp, value)
 
-    def at(self, timestamp: TimestampType) -> Optional[T]:
+    def at(self, timestamp: TimestampType) -> T | None:
         """
         Get value at a specific timestamp.
 
@@ -110,7 +101,7 @@ class Temporal(Generic[T]):
 
         return self._interpolation.interpolate(ts, before, after)
 
-    def __getitem__(self, timestamp: TimestampType) -> Optional[T]:
+    def __getitem__(self, timestamp: TimestampType) -> T | None:
         """Get value at timestamp using bracket notation."""
         return self.at(timestamp)
 
@@ -120,7 +111,7 @@ class Temporal(Generic[T]):
             raise EmptyTemporalError("No values in temporal")
         return self._timeline[-1][1]
 
-    def current_entry(self) -> Tuple[datetime, T]:
+    def current_entry(self) -> tuple[datetime, T]:
         """Get the most recent entry as (timestamp, value)."""
         if not self._timeline:
             raise EmptyTemporalError("No values in temporal")
@@ -132,7 +123,7 @@ class Temporal(Generic[T]):
             raise EmptyTemporalError("No values in temporal")
         return self._timeline[0][1]
 
-    def first_entry(self) -> Tuple[datetime, T]:
+    def first_entry(self) -> tuple[datetime, T]:
         """Get the first entry as (timestamp, value)."""
         if not self._timeline:
             raise EmptyTemporalError("No values in temporal")
@@ -180,11 +171,11 @@ class Temporal(Generic[T]):
 
         return TemporalQuery(entries, start_dt, end_dt, include_start, include_end)
 
-    def history(self) -> List[Tuple[datetime, T]]:
+    def history(self) -> list[tuple[datetime, T]]:
         """Get full history as list of (timestamp, value) tuples."""
         return list(self._timeline)
 
-    def changes(self) -> List[Tuple[datetime, Optional[T], T]]:
+    def changes(self) -> list[tuple[datetime, T | None, T]]:
         """
         Get list of changes as (timestamp, old_value, new_value) tuples.
         First entry has None as old_value.
@@ -192,7 +183,7 @@ class Temporal(Generic[T]):
         if not self._timeline:
             return []
 
-        changes: List[Tuple[datetime, Optional[T], T]] = [
+        changes: list[tuple[datetime, T | None, T]] = [
             (self._timeline[0][0], None, self._timeline[0][1])
         ]
 
@@ -203,7 +194,7 @@ class Temporal(Generic[T]):
 
         return changes
 
-    def rollback(self, to: Optional[TimestampType] = None, steps: int = 1) -> None:
+    def rollback(self, to: TimestampType | None = None, steps: int = 1) -> None:
         """
         Rollback changes.
 
@@ -230,7 +221,7 @@ class Temporal(Generic[T]):
         """True if there are any entries."""
         return len(self._timeline) > 0
 
-    def __iter__(self) -> Iterator[Tuple[datetime, T]]:
+    def __iter__(self) -> Iterator[tuple[datetime, T]]:
         """Iterate over (timestamp, value) pairs."""
         return iter(self._timeline)
 
@@ -242,14 +233,15 @@ class Temporal(Generic[T]):
     def __repr__(self) -> str:
         if not self._timeline:
             return f"{self.__class__.__name__}(empty)"
-        return f"{self.__class__.__name__}(entries={len(self._timeline)}, current={self._timeline[-1][1]!r})"
+        name = self.__class__.__name__
+        return f"{name}(entries={len(self._timeline)}, current={self._timeline[-1][1]!r})"
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Temporal):
             return NotImplemented
         return self._timeline == other._timeline
 
-    def copy(self) -> "Temporal[T]":
+    def copy(self) -> Temporal[T]:
         """Create a shallow copy."""
         new = Temporal[T]()
         new._timeline = list(self._timeline)
@@ -258,7 +250,7 @@ class Temporal(Generic[T]):
         new._deserializer = self._deserializer
         return new
 
-    def deepcopy(self) -> "Temporal[T]":
+    def deepcopy(self) -> Temporal[T]:
         """Create a deep copy."""
         new = Temporal[T]()
         new._timeline = [(ts, copy.deepcopy(v)) for ts, v in self._timeline]
@@ -267,15 +259,15 @@ class Temporal(Generic[T]):
         new._deserializer = self._deserializer
         return new
 
-    def timestamps(self) -> List[datetime]:
+    def timestamps(self) -> list[datetime]:
         """Get all timestamps."""
         return [ts for ts, _ in self._timeline]
 
-    def values(self) -> List[T]:
+    def values(self) -> list[T]:
         """Get all values."""
         return [v for _, v in self._timeline]
 
-    def slice(self, start: TimestampType, end: TimestampType) -> "Temporal[T]":
+    def slice(self, start: TimestampType, end: TimestampType) -> Temporal[T]:
         """Create a new Temporal containing only entries in the range."""
         query = self.between(start, end)
         new = Temporal[T]()
@@ -285,7 +277,7 @@ class Temporal(Generic[T]):
         new._deserializer = self._deserializer
         return new
 
-    def merge(self, other: "Temporal[T]", prefer_self: bool = True) -> "Temporal[T]":
+    def merge(self, other: Temporal[T], prefer_self: bool = True) -> Temporal[T]:
         """
         Merge with another temporal.
 
@@ -301,7 +293,7 @@ class Temporal(Generic[T]):
         new._serializer = self._serializer
         new._deserializer = self._deserializer
 
-        all_entries: Dict[datetime, T] = {}
+        all_entries: dict[datetime, T] = {}
 
         if prefer_self:
             for ts, v in other._timeline:
@@ -316,14 +308,14 @@ class Temporal(Generic[T]):
 
         new._timeline = sorted(all_entries.items(), key=lambda x: x[0])
         return new
-    
-    def _serialize_value(self, value: T) -> Dict[str, Any]:
+
+    def _serialize_value(self, value: T) -> dict[str, Any]:
         if self._serializer is not None:
             payload = self._serializer(value)
             if not isinstance(payload, dict) or "type" not in payload or "value" not in payload:
                 raise ValueError("Serializer must return a dict with 'type' and 'value' keys.")
             return {"type": payload["type"], "value": payload["value"]}
-        
+
         try:
             json.dumps(value)
         except TypeError as exc:
@@ -332,8 +324,8 @@ class Temporal(Generic[T]):
                 "provide serializer/deserializer callables."
             ) from exc
         return {"type": None, "value": value}
-    
-    def _deserialize_value(self, payload: Dict[str, Any]) -> T:
+
+    def _deserialize_value(self, payload: dict[str, Any]) -> T:
         value_type = payload.get("type")
         if value_type is None:
             return payload.get("value")  # type: ignore[return-value]
@@ -343,7 +335,7 @@ class Temporal(Generic[T]):
             )
         return self._deserializer(payload)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             "entries": [
@@ -356,10 +348,10 @@ class Temporal(Generic[T]):
     @classmethod
     def from_dict(
         cls,
-        data: Dict[str, Any],
-        serializer: Optional[Callable[[T], Dict[str, Any]]] = None,
-        deserializer: Optional[Callable[[Dict[str, Any]], T]] = None,
-    ) -> "Temporal[T]":
+        data: dict[str, Any],
+        serializer: Callable[[T], dict[str, Any]] | None = None,
+        deserializer: Callable[[dict[str, Any]], T] | None = None,
+    ) -> Temporal[T]:
         """Create from dictionary."""
         new = cls(serializer=serializer, deserializer=deserializer)
         for entry in data.get("entries", []):
@@ -386,20 +378,20 @@ class Temporal(Generic[T]):
     def from_json(
         cls,
         json_str: str,
-        serializer: Optional[Callable[[T], Dict[str, Any]]] = None,
-        deserializer: Optional[Callable[[Dict[str, Any]], T]] = None,
-    ) -> "Temporal[T]":
+        serializer: Callable[[T], dict[str, Any]] | None = None,
+        deserializer: Callable[[dict[str, Any]], T] | None = None,
+    ) -> Temporal[T]:
         """Deserialize from JSON string."""
         return cls.from_dict(json.loads(json_str), serializer=serializer, deserializer=deserializer)
 
-    def __getstate__(self) -> Dict[str, Any]:
+    def __getstate__(self) -> dict[str, Any]:
         """Support for pickle serialization."""
         return {
             "timeline": self._timeline,
             "interpolation": self._interpolation,
         }
 
-    def __setstate__(self, state: Dict[str, Any]) -> None:
+    def __setstate__(self, state: dict[str, Any]) -> None:
         """Support for pickle deserialization."""
         self._timeline = state["timeline"]
         self._interpolation = state["interpolation"]

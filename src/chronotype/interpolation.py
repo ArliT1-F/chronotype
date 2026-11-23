@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Generic, List, Optional, Tuple, TypeVar
+from typing import Generic, Optional, TypeVar
 
 T = TypeVar("T")
 N = TypeVar("N", int, float)
@@ -15,8 +15,8 @@ class InterpolationStrategy(ABC, Generic[T]):
     def interpolate(
         self,
         target: datetime,
-        before: Optional[Tuple[datetime, T]],
-        after: Optional[Tuple[datetime, T]],
+        before: Optional[tuple[datetime, T]],
+        after: Optional[tuple[datetime, T]],
     ) -> Optional[T]:
         """
         Interpolate a value at the target timestamp.
@@ -41,8 +41,8 @@ class StepInterpolation(InterpolationStrategy[T]):
     def interpolate(
         self,
         target: datetime,
-        before: Optional[Tuple[datetime, T]],
-        after: Optional[Tuple[datetime, T]],
+        before: Optional[tuple[datetime, T]],
+        after: Optional[tuple[datetime, T]],
     ) -> Optional[T]:
         if before is not None:
             return before[1]
@@ -58,8 +58,8 @@ class LinearInterpolation(InterpolationStrategy[N]):
     def interpolate(
         self,
         target: datetime,
-        before: Optional[Tuple[datetime, N]],
-        after: Optional[Tuple[datetime, N]],
+        before: Optional[tuple[datetime, N]],
+        after: Optional[tuple[datetime, N]],
     ) -> Optional[N]:
         if before is None and after is None:
             return None
@@ -99,8 +99,8 @@ class NearestInterpolation(InterpolationStrategy[T]):
     def interpolate(
         self,
         target: datetime,
-        before: Optional[Tuple[datetime, T]],
-        after: Optional[Tuple[datetime, T]],
+        before: Optional[tuple[datetime, T]],
+        after: Optional[tuple[datetime, T]],
     ) -> Optional[T]:
         if before is None and after is None:
             return None

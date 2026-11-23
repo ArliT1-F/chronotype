@@ -1,11 +1,10 @@
 """Tests for numeric temporal types."""
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pytest
 
 from chronotype import TemporalBool, TemporalFloat, TemporalInt
-from chronotype.exceptions import EmptyTemporalError
 
 
 class TestTemporalInt:

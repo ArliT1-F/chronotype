@@ -1,17 +1,12 @@
 """Query objects for temporal range operations."""
 
-from datetime import datetime, timedelta
+from collections.abc import Iterator
+from datetime import datetime
 from typing import (
-    TYPE_CHECKING,
     Callable,
     Generic,
-    Iterator,
-    List,
     Optional,
-    Tuple,
     TypeVar,
-    Union,
-    cast,
 )
 
 from chronotype.exceptions import EmptyTemporalError
@@ -28,7 +23,7 @@ class TemporalQuery(Generic[T]):
 
     def __init__(
         self,
-        entries: List[Tuple[datetime, T]],
+        entries: list[tuple[datetime, T]],
         start: datetime,
         end: datetime,
         include_start: bool = True,
@@ -50,15 +45,15 @@ class TemporalQuery(Generic[T]):
         """End of the query range."""
         return self._end
 
-    def entries(self) -> List[Tuple[datetime, T]]:
+    def entries(self) -> list[tuple[datetime, T]]:
         """Get all entries in the range as (timestamp, value) tuples."""
         return list(self._entries)
 
-    def values(self) -> List[T]:
+    def values(self) -> list[T]:
         """Get all values in the range."""
         return [v for _, v in self._entries]
 
-    def timestamps(self) -> List[datetime]:
+    def timestamps(self) -> list[datetime]:
         """Get all timestamps in the range."""
         return [ts for ts, _ in self._entries]
 
@@ -70,13 +65,13 @@ class TemporalQuery(Generic[T]):
         """Check if the query result is empty."""
         return len(self._entries) == 0
 
-    def first(self) -> Optional[Tuple[datetime, T]]:
+    def first(self) -> Optional[tuple[datetime, T]]:
         """Get the first entry in the range."""
         if self._entries:
             return self._entries[0]
         return None
 
-    def last(self) -> Optional[Tuple[datetime, T]]:
+    def last(self) -> Optional[tuple[datetime, T]]:
         """Get the last entry in the range."""
         if self._entries:
             return self._entries[-1]
@@ -114,7 +109,7 @@ class TemporalQuery(Generic[T]):
             self._include_end,
         )
 
-    def __iter__(self) -> Iterator[Tuple[datetime, T]]:
+    def __iter__(self) -> Iterator[tuple[datetime, T]]:
         return iter(self._entries)
 
     def __len__(self) -> int:
@@ -129,7 +124,7 @@ class NumericTemporalQuery(TemporalQuery[N]):
 
     def __init__(
         self,
-        entries: List[Tuple[datetime, N]],
+        entries: list[tuple[datetime, N]],
         start: datetime,
         end: datetime,
         include_start: bool = True,
@@ -154,8 +149,8 @@ class NumericTemporalQuery(TemporalQuery[N]):
     def sum(self) -> N:
         """Get the sum of all values in the range."""
         if not self._entries:
-            return cast(N, 0)
-        return cast(N, sum(v for _, v in self._entries))
+            return 0
+        return sum(v for _, v in self._entries)
 
     def average(self) -> float:
         """
@@ -171,7 +166,7 @@ class NumericTemporalQuery(TemporalQuery[N]):
         total_weight = 0.0
         weighted_sum = 0.0
 
-        effective_entries: List[Tuple[datetime, N]] = []
+        effective_entries: list[tuple[datetime, N]] = []
 
         if self._value_before_range is not None:
             effective_entries.append((self._start, self._value_before_range))

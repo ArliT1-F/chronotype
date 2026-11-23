@@ -6,14 +6,14 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 
 from chronotype import Temporal
-from chronotype.exceptions import EmptyTemporalError, InvalidTimestampError
+from chronotype.exceptions import EmptyTemporalError
 
 
 @dataclass(frozen=True)
 class Widget:
     name: str
     count: int
-    
+
 def widget_serializer(value: Widget) -> dict:
     if not isinstance(value, Widget):
         raise TypeError("Unsupported type for widget serializer.")
@@ -24,7 +24,7 @@ def widget_deserializer(payload: dict) -> Widget:
     if payload.get("type") != "Widget":
         raise ValueError("Unsupported type for widget deserializer.")
     return Widget(**payload["value"])
-        
+
 
 class TestTemporalBasics:
     def test_create_empty(self):
@@ -182,7 +182,7 @@ class TestTemporalBasics:
 
         assert t2.at(base_time) == 42
         assert len(t2) == 2
-        
+
     def test_serialization_json_custom_type(self, base_time):
         t = Temporal[Widget](serializer=widget_serializer, deserializer=widget_deserializer)
         t[base_time] = Widget(name="alpha", count=1)
@@ -232,7 +232,7 @@ class TestTemporalBasics:
         aware_time = datetime(2026, 1, 1, 1, 0, 0, tzinfo=timezone(timedelta(hours=1)))
         t[naive_time] = "first"
         t[aware_time] = "second"
-        
+
         assert len(t) == 1
         assert t.at(naive_time) == "second"
 

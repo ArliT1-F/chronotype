@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import copy
 from datetime import datetime
-from sqlite3.dbapi2 import Timestamp
-from typing import Any, Dict, Generic, Iterator, List, Optional, Tuple, TypeVar
+from typing import TypeVar
 
 from chronotype.base import Temporal
 from chronotype.exceptions import EmptyTemporalError
 from chronotype.interpolation import StepInterpolation
-from chronotype.query import TemporalQuery
 from chronotype.utils import TimestampType, normalize_timestamp, now
 
 K = TypeVar("K")
@@ -18,15 +15,15 @@ V = TypeVar("V")
 T = TypeVar("T")
 
 
-class TemporalList(Temporal[List[T]]):
+class TemporalList(Temporal[list[T]]):
     """
     Temporal list that tracks history of list changes.
     """
 
     def __init__(
         self,
-        initial: Optional[List[T]] = None,
-        initial_time: Optional[TimestampType] = None,
+        initial: list[T] | None = None,
+        initial_time: TimestampType | None = None,
     ) -> None:
         super().__init__(
             list(initial) if initial else None,
@@ -34,20 +31,20 @@ class TemporalList(Temporal[List[T]]):
             StepInterpolation(),
         )
 
-    def set(self, timestamp: TimestampType, value: List[T]) -> None:
+    def set(self, timestamp: TimestampType, value: list[T]) -> None:
         """Set list at timestamp, storing a copy."""
         super().set(timestamp, list(value))
 
-    def at(self, timestamp: TimestampType) -> Optional[List[T]]:
+    def at(self, timestamp: TimestampType) -> list[T] | None:
         """Get list at timestamp, returning a copy."""
         value = super().at(timestamp)
         return list(value) if value is not None else None
-    
-    def current(self) -> List[T]:
+
+    def current(self) -> list[T]:
         """Get the most recent list value, returning a copy."""
         return list(super().current())
-    
-    def append(self, value: T, timestamp: Optional[TimestampType] = None) -> None:
+
+    def append(self, value: T, timestamp: TimestampType | None = None) -> None:
         """Append value to list, creating new historical entry."""
         ts = normalize_timestamp(timestamp) if timestamp else now()
 
@@ -58,7 +55,7 @@ class TemporalList(Temporal[List[T]]):
             current.append(value)
             self.set(ts, current)
 
-    def extend(self, values: List[T], timestamp: Optional[TimestampType] = None) -> None:
+    def extend(self, values: list[T], timestamp: TimestampType | None = None) -> None:
         """Extend list with values, creating new historical entry."""
         ts = normalize_timestamp(timestamp) if timestamp else now()
 
@@ -69,7 +66,7 @@ class TemporalList(Temporal[List[T]]):
             current.extend(values)
             self.set(ts, current)
 
-    def insert(self, index: int, value: T, timestamp: Optional[TimestampType] = None) -> None:
+    def insert(self, index: int, value: T, timestamp: TimestampType | None = None) -> None:
         """Insert value at index, creating new historical entry."""
         ts = normalize_timestamp(timestamp) if timestamp else now()
 
@@ -80,7 +77,7 @@ class TemporalList(Temporal[List[T]]):
             current.insert(index, value)
             self.set(ts, current)
 
-    def remove(self, value: T, timestamp: Optional[TimestampType] = None) -> None:
+    def remove(self, value: T, timestamp: TimestampType | None = None) -> None:
         """Remove value from list, creating new historical entry."""
         ts = normalize_timestamp(timestamp) if timestamp else now()
 
@@ -92,7 +89,7 @@ class TemporalList(Temporal[List[T]]):
         self.set(ts, current)
 
     def pop(
-        self, index: int = -1, timestamp: Optional[TimestampType] = None
+        self, index: int = -1, timestamp: TimestampType | None = None
     ) -> T:
         """Pop value from list, creating new historical entry."""
         ts = normalize_timestamp(timestamp) if timestamp else now()
@@ -105,7 +102,7 @@ class TemporalList(Temporal[List[T]]):
         self.set(ts, current)
         return value
 
-    def clear_list(self, timestamp: Optional[TimestampType] = None) -> None:
+    def clear_list(self, timestamp: TimestampType | None = None) -> None:
         """Clear the list contents (not the history)."""
         ts = normalize_timestamp(timestamp) if timestamp else now()
         self.set(ts, [])
@@ -116,7 +113,7 @@ class TemporalList(Temporal[List[T]]):
             raise EmptyTemporalError()
         return len(self.current())
 
-    def len_at(self, timestamp: TimestampType) -> Optional[int]:
+    def len_at(self, timestamp: TimestampType) -> int | None:
         """Get length of list at timestamp."""
         value = self.at(timestamp)
         return len(value) if value is not None else None
@@ -126,7 +123,7 @@ class TemporalList(Temporal[List[T]]):
         lst = self.at(timestamp)
         return value in lst if lst is not None else False
 
-    def get_item_at(self, timestamp: TimestampType, index: int) -> Optional[T]:
+    def get_item_at(self, timestamp: TimestampType, index: int) -> T | None:
         """Get item at index from list at timestamp."""
         lst = self.at(timestamp)
         if lst is not None and -len(lst) <= index < len(lst):
@@ -140,15 +137,15 @@ class TemporalList(Temporal[List[T]]):
         return new
 
 
-class TemporalDict(Temporal[Dict[K, V]]):
+class TemporalDict(Temporal[dict[K, V]]):
     """
     Temporal dictionary that tracks history of dict changes.
     """
 
     def __init__(
         self,
-        initial: Optional[Dict[K, V]] = None,
-        initial_time: Optional[TimestampType] = None,
+        initial: dict[K, V] | None = None,
+        initial_time: TimestampType | None = None,
     ) -> None:
         super().__init__(
             dict(initial) if initial else None,
@@ -156,21 +153,21 @@ class TemporalDict(Temporal[Dict[K, V]]):
             StepInterpolation(),
         )
 
-    def set(self, timestamp: TimestampType, value: Dict[K, V]) -> None:
+    def set(self, timestamp: TimestampType, value: dict[K, V]) -> None:
         """Set dict at timestamp, storing a copy."""
         super().set(timestamp, dict(value))
-        
-    def at(self, timestamp: TimestampType) -> Optional[Dict[K, V]]:
+
+    def at(self, timestamp: TimestampType) -> dict[K, V] | None:
         """Get dict at timestamp, returning a copy."""
         value = super().at(timestamp)
         return dict(value) if value is not None else None
-    
-    def current(self) -> Dict[K, V]:
+
+    def current(self) -> dict[K, V]:
         """Get the most recent dict value, returning a copy."""
         return dict(super().current())
 
     def set_item(
-        self, key: K, value: V, timestamp: Optional[TimestampType] = None
+        self, key: K, value: V, timestamp: TimestampType | None = None
     ) -> None:
         """Set key-value pair, creating new historical entry."""
         ts = normalize_timestamp(timestamp) if timestamp else now()
@@ -182,7 +179,7 @@ class TemporalDict(Temporal[Dict[K, V]]):
             current[key] = value
             self.set(ts, current)
 
-    def delete_item(self, key: K, timestamp: Optional[TimestampType] = None) -> None:
+    def delete_item(self, key: K, timestamp: TimestampType | None = None) -> None:
         """Delete key, creating new historical entry."""
         ts = normalize_timestamp(timestamp) if timestamp else now()
 
@@ -194,7 +191,7 @@ class TemporalDict(Temporal[Dict[K, V]]):
         self.set(ts, current)
 
     def update_dict(
-        self, other: Dict[K, V], timestamp: Optional[TimestampType] = None
+        self, other: dict[K, V], timestamp: TimestampType | None = None
     ) -> None:
         """Update dict with another dict, creating new historical entry."""
         ts = normalize_timestamp(timestamp) if timestamp else now()
@@ -207,8 +204,8 @@ class TemporalDict(Temporal[Dict[K, V]]):
             self.set(ts, current)
 
     def pop_item(
-        self, key: K, timestamp: Optional[TimestampType] = None, default: Optional[V] = None
-    ) -> Optional[V]:
+        self, key: K, timestamp: TimestampType | None = None, default: V | None = None
+    ) -> V | None:
         """Pop key from dict, creating new historical entry."""
         ts = normalize_timestamp(timestamp) if timestamp else now()
 
@@ -220,12 +217,12 @@ class TemporalDict(Temporal[Dict[K, V]]):
         self.set(ts, current)
         return value
 
-    def clear_dict(self, timestamp: Optional[TimestampType] = None) -> None:
+    def clear_dict(self, timestamp: TimestampType | None = None) -> None:
         """Clear the dict contents (not the history)."""
         ts = normalize_timestamp(timestamp) if timestamp else now()
         self.set(ts, {})
 
-    def get_item_at(self, timestamp: TimestampType, key: K) -> Optional[V]:
+    def get_item_at(self, timestamp: TimestampType, key: K) -> V | None:
         """Get value for key from dict at timestamp."""
         dct = self.at(timestamp)
         return dct.get(key) if dct is not None else None
@@ -235,30 +232,30 @@ class TemporalDict(Temporal[Dict[K, V]]):
         dct = self.at(timestamp)
         return key in dct if dct is not None else False
 
-    def keys_at(self, timestamp: TimestampType) -> Optional[List[K]]:
+    def keys_at(self, timestamp: TimestampType) -> list[K] | None:
         """Get keys of dict at timestamp."""
         dct = self.at(timestamp)
         return list(dct.keys()) if dct is not None else None
 
-    def values_at(self, timestamp: TimestampType) -> Optional[List[V]]:
+    def values_at(self, timestamp: TimestampType) -> list[V] | None:
         """Get values of dict at timestamp."""
         dct = self.at(timestamp)
         return list(dct.values()) if dct is not None else None
 
-    def items_at(self, timestamp: TimestampType) -> Optional[List[Tuple[K, V]]]:
+    def items_at(self, timestamp: TimestampType) -> list[tuple[K, V]] | None:
         """Get items of dict at timestamp."""
         dct = self.at(timestamp)
         return list(dct.items()) if dct is not None else None
 
-    def len_at(self, timestamp: TimestampType) -> Optional[int]:
+    def len_at(self, timestamp: TimestampType) -> int | None:
         """Get length of dict at timestamp."""
         dct = self.at(timestamp)
         return len(dct) if dct is not None else None
 
-    def key_history(self, key: K) -> List[Tuple[datetime, Optional[V]]]:
+    def key_history(self, key: K) -> list[tuple[datetime, V | None]]:
         """Get history of a specific key's values."""
         history = []
-        prev_value: Optional[V] = None
+        prev_value: V | None = None
         key_existed = False
 
         for ts, dct in self._timeline:
